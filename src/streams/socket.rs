@@ -14,7 +14,7 @@ use xx_core::{
 	pointer::*
 };
 
-use crate::{async_runtime::*, ops::*};
+use crate::{async_runtime::*, ops::io::*};
 
 #[async_fn]
 async fn new_socket_for_addr(addr: &Address, socket_type: u32, protocol: u32) -> Result<Socket> {
@@ -77,9 +77,7 @@ async fn connect_addr<A: ToSocketAddrs>(
 
 fn convert_addr(storage: AddressStorage) -> SocketAddr {
 	/* into should be safe here unless OS is broken */
-	let addr: Option<SocketAddr> = storage.into();
-
-	addr.unwrap()
+	storage.try_into().unwrap()
 }
 
 struct Socket {

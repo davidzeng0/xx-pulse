@@ -48,14 +48,14 @@ pub mod xx_async_runtime {
 		}
 
 		#[inline(always)]
-		pub(crate) fn suspend(&mut self) {
+		fn suspend(&mut self) {
 			unsafe {
 				self.worker.suspend();
 			}
 		}
 
 		#[inline(always)]
-		pub(crate) fn resume(&mut self) {
+		fn resume(&mut self) {
 			unsafe {
 				self.executor.resume(self.worker);
 			}

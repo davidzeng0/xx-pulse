@@ -6,10 +6,7 @@ use std::{
 
 use xx_core::os::fcntl::OpenFlag;
 
-use crate::{
-	async_runtime::*,
-	ops::{close, open, read, write}
-};
+use crate::{async_runtime::*, ops::io::*};
 
 pub struct File {
 	fd: OwnedFd

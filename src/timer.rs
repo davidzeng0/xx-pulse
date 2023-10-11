@@ -5,7 +5,7 @@ use enumflags2::{bitflags, make_bitflags, BitFlags};
 use crate::{
 	async_runtime::*,
 	driver::{Driver, TimeoutFlag},
-	ops::timeout
+	ops::timers::*
 };
 
 #[bitflags]
