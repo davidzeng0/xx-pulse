@@ -17,9 +17,11 @@ struct SelectData<Output, T1: Task<Output, C1>, C1: Cancel, T2: Task<Output, C2>
 	task_1: Option<T1>,
 	req_1: Request<Output>,
 	cancel_1: Option<C1>,
+
 	task_2: Option<T2>,
 	req_2: Request<Output>,
 	cancel_2: Option<C2>,
+
 	result: Option<Output>,
 	request: RequestPtr<Output>,
 	sync_done: bool,

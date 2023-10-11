@@ -13,6 +13,7 @@ async fn internal_get_driver() -> Handle<Driver> {
 }
 
 pub mod io;
+pub mod join;
 pub mod select;
 pub mod spawn;
 pub mod timers;
