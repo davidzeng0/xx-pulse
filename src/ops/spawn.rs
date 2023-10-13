@@ -1,10 +1,7 @@
 use std::io::Result;
 
 use xx_core::{
-	coroutines::{
-		spawn,
-		task::{AsyncTask, BlockOn}
-	},
+	coroutines::{runtime::block_on, spawn, task::AsyncTask},
 	pointer::{ConstPtr, MutPtr},
 	task::{
 		closure::CancelClosure,
@@ -141,7 +138,7 @@ impl<Output> AsyncTask<Context, Output> for JoinHandle<Output> {
 			return output;
 		}
 
-		BlockOn::new(JoinTask { task: self.task }).run(context)
+		block_on(JoinTask { task: self.task }).run(context)
 	}
 }
 

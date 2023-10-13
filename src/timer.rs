@@ -39,21 +39,25 @@ impl Timer {
 		let now = Driver::now();
 
 		self.expire = if !self.flags.intersects(TimerFlag::Align) {
-			now + self.delay
-		} else if now <= self.expire + self.delay {
-			self.expire + self.delay
+			now.saturating_add(self.delay)
 		} else {
-			/* slow path */
-			let mut expire = now + self.delay;
+			let next = self.expire.saturating_add(self.delay);
 
-			if self.expire != 0 {
-				/* subsequent iteration, align to next delay boundary */
-				let align = (now - self.expire) % self.delay;
+			if now <= next {
+				next
+			} else {
+				/* slow path */
+				let mut expire = now.saturating_add(self.delay);
 
-				expire -= align;
+				if self.expire != 0 {
+					/* subsequent iteration, align to next delay boundary */
+					let align = (now - self.expire) % self.delay;
+
+					expire -= align;
+				}
+
+				expire
 			}
-
-			expire
 		};
 
 		let mut flags = make_bitflags!(TimeoutFlag::{Abs});

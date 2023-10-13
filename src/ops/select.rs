@@ -1,10 +1,7 @@
 use std::{io::Result, marker::PhantomData};
 
 use xx_core::{
-	coroutines::{
-		spawn,
-		task::{AsyncTask, BlockOn}
-	},
+	coroutines::{runtime::block_on, spawn, task::AsyncTask},
 	pin_local_mut,
 	pointer::{ConstPtr, MutPtr},
 	task::{env::Global, sync_task, Cancel, Progress, Request, RequestPtr, Task},
@@ -165,6 +162,5 @@ pub async fn select<Output, T1: AsyncTask<Context, Output>, T2: AsyncTask<Contex
 	};
 
 	pin_local_mut!(data);
-
-	BlockOn::new(data.select()).await
+	block_on(data.select()).await
 }

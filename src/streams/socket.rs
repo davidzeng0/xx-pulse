@@ -6,10 +6,15 @@ use std::{
 };
 
 use xx_core::{
+	async_std::io::{Close, Read, Write},
+	coroutines::async_trait_fn,
 	os::{
 		inet::{Address, AddressStorage, IPProtocol},
 		iovec::IoVec,
-		socket::{set_reuse_addr, AddressFamily, MessageHeader, Shutdown, SocketType, MAX_BACKLOG}
+		socket::{
+			set_recvbuf_size, set_reuse_addr, set_sendbuf_size, set_tcp_keepalive, AddressFamily,
+			MessageHeader, Shutdown, SocketType, MAX_BACKLOG
+		}
 	},
 	pointer::*
 };
@@ -28,51 +33,52 @@ async fn new_socket_for_addr(addr: &Address, socket_type: u32, protocol: u32) ->
 }
 
 #[async_fn]
-async fn bind_addr<A: ToSocketAddrs>(addr: A, socket_type: u32, protocol: u32) -> Result<Socket> {
+async fn foreach_addr<A: ToSocketAddrs, F: Fn(&Socket, &Address) -> Result<()>>(
+	addrs: A, socket_type: u32, protocol: u32, f: F
+) -> Result<Socket> {
 	let mut error = None;
 
-	for addr in addr.to_socket_addrs()? {
+	for addr in addrs.to_socket_addrs()? {
 		let addr = addr.into();
 		let socket = new_socket_for_addr(&addr, socket_type, protocol).await?;
 
-		set_reuse_addr(socket.fd(), true)?;
-
-		let result = match &addr {
-			Address::V4(addr) => bind(socket.fd(), addr).await,
-			Address::V6(addr) => bind(socket.fd(), addr).await
-		};
-
-		match result {
-			Err(err) => error = Some(err),
-			Ok(()) => return Ok(socket)
+		match f(&socket, &addr) {
+			Ok(()) => return Ok(socket),
+			Err(err) => error = Some(err)
 		}
+
+		socket.close().await?;
 	}
 
 	Err(error.unwrap_or(Error::new(ErrorKind::InvalidInput, "No addresses")))
 }
 
 #[async_fn]
+async fn bind_addr<A: ToSocketAddrs>(addr: A, socket_type: u32, protocol: u32) -> Result<Socket> {
+	foreach_addr(addr, socket_type, protocol, |socket, addr| {
+		set_reuse_addr(socket.fd(), true)?;
+
+		match &addr {
+			Address::V4(addr) => bind(socket.fd(), addr).await,
+			Address::V6(addr) => bind(socket.fd(), addr).await
+		}
+	})
+	.await
+}
+
+#[async_fn]
 async fn connect_addr<A: ToSocketAddrs>(
 	addr: A, socket_type: u32, protocol: u32
 ) -> Result<Socket> {
-	let mut error = None;
+	foreach_addr(addr, socket_type, protocol, |socket, addr| {
+		set_reuse_addr(socket.fd(), true)?;
 
-	for addr in addr.to_socket_addrs()? {
-		let addr = addr.into();
-		let socket = new_socket_for_addr(&addr, socket_type, protocol).await?;
-
-		let result = match &addr {
+		match &addr {
 			Address::V4(addr) => connect(socket.fd(), addr).await,
 			Address::V6(addr) => connect(socket.fd(), addr).await
-		};
-
-		match result {
-			Err(err) => error = Some(err),
-			Ok(()) => return Ok(socket)
 		}
-	}
-
-	Err(error.unwrap_or(Error::new(ErrorKind::InvalidInput, "No addresses")))
+	})
+	.await
 }
 
 fn convert_addr(storage: AddressStorage) -> SocketAddr {
@@ -93,20 +99,13 @@ impl Socket {
 	pub async fn close(self) -> Result<()> {
 		close(self.fd).await
 	}
-}
 
-pub struct StreamSocket {
-	socket: Socket
-}
-
-#[async_fn]
-impl StreamSocket {
 	pub async fn recv(&self, buf: &mut [u8], flags: u32) -> Result<usize> {
-		recv(self.socket.fd(), buf, flags).await
+		recv(self.fd(), buf, flags).await
 	}
 
 	pub async fn send(&self, buf: &[u8], flags: u32) -> Result<usize> {
-		send(self.socket.fd(), buf, flags).await
+		send(self.fd(), buf, flags).await
 	}
 
 	pub async fn recvfrom(&self, buf: &mut [u8], flags: u32) -> Result<(usize, SocketAddr)> {
@@ -126,7 +125,7 @@ impl StreamSocket {
 			flags: 0
 		};
 
-		let recvd = recvmsg(self.socket.fd(), &mut header, flags).await?;
+		let recvd = recvmsg(self.fd(), &mut header, flags).await?;
 
 		Ok((recvd, convert_addr(addr)))
 	}
@@ -155,15 +154,131 @@ impl StreamSocket {
 			flags: 0
 		};
 
-		sendmsg(self.socket.fd(), &header, flags).await
+		sendmsg(self.fd(), &header, flags).await
 	}
 
 	pub async fn shutdown(&self, how: Shutdown) -> Result<()> {
-		shutdown(self.socket.fd(), how).await
+		shutdown(self.fd(), how).await
 	}
 
-	pub async fn close(self) -> Result<()> {
-		self.socket.close().await
+	pub async fn set_recvbuf_size(&self, size: i32) -> Result<()> {
+		set_recvbuf_size(self.fd(), size)
+	}
+
+	pub async fn set_sendbuf_size(&self, size: i32) -> Result<()> {
+		set_sendbuf_size(self.fd(), size)
+	}
+}
+
+pub struct StreamSocket {
+	socket: Socket
+}
+
+macro_rules! alias_func {
+	($func: ident ($self: ident: $self_type: ty $(, $arg: ident: $type: ty)*) -> $return_type: ty) => {
+		#[async_fn]
+        pub async fn $func($self: $self_type $(, $arg: $type)*) -> $return_type {
+			$self.socket.$func($($arg),*).await
+        }
+    }
+}
+
+impl StreamSocket {
+	alias_func!(close(self: Self) -> Result<()>);
+
+	alias_func!(recv(self: &Self, buf: &mut [u8], flags: u32) -> Result<usize>);
+
+	alias_func!(send(self: &Self, buf: &[u8], flags: u32) -> Result<usize>);
+
+	alias_func!(recvfrom(self: &Self, buf: &mut [u8], flags: u32) -> Result<(usize, SocketAddr)>);
+
+	alias_func!(sendto(self: &Self, buf: &[u8], flags: u32, addr: &SocketAddr) -> Result<usize>);
+
+	alias_func!(shutdown(self: &Self, how: Shutdown) -> Result<()>);
+
+	alias_func!(set_recvbuf_size(self: &Self, size: i32) -> Result<()>);
+
+	alias_func!(set_sendbuf_size(self: &Self, size: i32) -> Result<()>);
+
+	pub async fn set_tcp_nodelay(&self, size: i32) -> Result<()> {
+		set_sendbuf_size(self.socket.fd(), size)
+	}
+
+	pub async fn set_tcp_keepalive(&self, enable: bool, idle: i32) -> Result<()> {
+		set_tcp_keepalive(self.socket.fd(), enable, idle)
+	}
+}
+
+#[async_trait_fn]
+impl Read<Context> for StreamSocket {
+	async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+		self.recv(buf, 0).await
+	}
+}
+
+#[async_trait_fn]
+impl Write<Context> for StreamSocket {
+	async fn write(&mut self, buf: &[u8]) -> Result<usize> {
+		self.send(buf, 0).await
+	}
+
+	async fn flush(&mut self) -> Result<()> {
+		/* sockets don't need flushing. set nodelay if you want immediate writes */
+		Ok(())
+	}
+}
+
+#[async_trait_fn]
+impl Close<Context> for StreamSocket {
+	async fn close(self) -> Result<()> {
+		self.close().await
+	}
+}
+
+pub struct DatagramSocket {
+	socket: Socket
+}
+
+impl DatagramSocket {
+	alias_func!(close(self: Self) -> Result<()>);
+
+	alias_func!(recv(self: &Self, buf: &mut [u8], flags: u32) -> Result<usize>);
+
+	alias_func!(send(self: &Self, buf: &[u8], flags: u32) -> Result<usize>);
+
+	alias_func!(recvfrom(self: &Self, buf: &mut [u8], flags: u32) -> Result<(usize, SocketAddr)>);
+
+	alias_func!(sendto(self: &Self, buf: &[u8], flags: u32, addr: &SocketAddr) -> Result<usize>);
+
+	alias_func!(shutdown(self: &Self, how: Shutdown) -> Result<()>);
+
+	alias_func!(set_recvbuf_size(self: &Self, size: i32) -> Result<()>);
+
+	alias_func!(set_sendbuf_size(self: &Self, size: i32) -> Result<()>);
+}
+
+#[async_trait_fn]
+impl Read<Context> for DatagramSocket {
+	async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+		self.recv(buf, 0).await
+	}
+}
+
+#[async_trait_fn]
+impl Write<Context> for DatagramSocket {
+	async fn write(&mut self, buf: &[u8]) -> Result<usize> {
+		self.send(buf, 0).await
+	}
+
+	async fn flush(&mut self) -> Result<()> {
+		Ok(())
+	}
+}
+
+#[async_trait_fn]
+impl Close<Context> for DatagramSocket {
+	async fn close(self) -> Result<()> {
+		self.close().await
 	}
 }
 
@@ -171,8 +286,10 @@ pub struct TcpListener {
 	socket: Socket
 }
 
-#[async_fn]
 impl TcpListener {
+	alias_func!(close(self: Self) -> Result<()>);
+
+	#[async_fn]
 	pub async fn accept(&self) -> Result<(StreamSocket, SocketAddr)> {
 		let mut storage = AddressStorage::new();
 		let (fd, _) = accept(self.socket.fd(), &mut storage).await?;
@@ -181,10 +298,6 @@ impl TcpListener {
 			StreamSocket { socket: Socket { fd } },
 			convert_addr(storage)
 		))
-	}
-
-	pub async fn close(self) -> Result<()> {
-		self.socket.close().await
 	}
 }
 
@@ -211,16 +324,16 @@ pub struct Udp;
 
 #[async_fn]
 impl Udp {
-	pub async fn connect(addr: &str) -> Result<StreamSocket> {
+	pub async fn connect(addr: &str) -> Result<DatagramSocket> {
 		let socket =
 			connect_addr(addr, SocketType::Datagram as u32, IPProtocol::Udp as u32).await?;
 
-		Ok(StreamSocket { socket })
+		Ok(DatagramSocket { socket })
 	}
 
-	pub async fn bind(addr: &str) -> Result<StreamSocket> {
+	pub async fn bind(addr: &str) -> Result<DatagramSocket> {
 		let socket = bind_addr(addr, SocketType::Datagram as u32, IPProtocol::Udp as u32).await?;
 
-		Ok(StreamSocket { socket })
+		Ok(DatagramSocket { socket })
 	}
 }

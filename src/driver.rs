@@ -14,30 +14,13 @@ use xx_core::{
 		time::{self, ClockId}
 	},
 	pointer::{ConstPtr, MutPtr},
-	task::{env::Global, sync_task, Progress, Request, RequestPtr}
+	task::{env::Global, sync_task, Progress, Request, RequestPtr, Task}
 };
 
-use super::engine::{Engine, EngineImpl};
-
-macro_rules! engine_task {
-	($func: ident($($arg: ident: $type: ty),*)) => {
-
-		#[sync_task]
-        pub fn $func(&mut self, $($arg: $type),*) -> Result<usize> {
-			fn cancel(self: &mut Self) -> Result<()> {
-				unsafe { self.io_engine.cancel(request.cast()) }
-			}
-
-			match unsafe { self.io_engine.$func($($arg),*, request) } {
-				Some(result) => Progress::Done(result),
-				None => Progress::Pending(cancel(self, request))
-			}
-        }
-    }
-}
+use super::engine::Engine;
 
 pub struct Driver {
-	io_engine: Box<dyn EngineImpl>,
+	io_engine: Engine,
 	timers: BTreeSet<Timeout>,
 	timer_count: u32 /* excludes idle timers */
 }
@@ -83,34 +66,6 @@ impl PartialOrd for Timeout {
 }
 
 impl Driver {
-	engine_task!(open(path: &CStr, flags: u32, mode: u32));
-
-	engine_task!(close(fd: OwnedFd));
-
-	engine_task!(read(fd: BorrowedFd<'_>, buf: &mut [u8], offset: i64));
-
-	engine_task!(write(fd: BorrowedFd<'_>, buf: &[u8], offset: i64));
-
-	engine_task!(socket(domain: u32, socket_type: u32, protocol: u32));
-
-	engine_task!(accept(socket: BorrowedFd<'_>, addr: MutPtr<()>, addrlen: &mut u32));
-
-	engine_task!(connect(socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32));
-
-	engine_task!(recv(socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32));
-
-	engine_task!(recvmsg(socket: BorrowedFd<'_>, header: &mut MessageHeader, flags: u32));
-
-	engine_task!(send(socket: BorrowedFd<'_>, buf: &[u8], flags: u32));
-
-	engine_task!(sendmsg(socket: BorrowedFd<'_>, header: &MessageHeader, flags: u32));
-
-	engine_task!(shutdown(socket: BorrowedFd<'_>, how: Shutdown));
-
-	engine_task!(bind(socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32));
-
-	engine_task!(listen(socket: BorrowedFd<'_>, backlog: i32));
-
 	pub fn new() -> Result<Self> {
 		Ok(Self {
 			timers: BTreeSet::new(),
@@ -212,7 +167,7 @@ impl Driver {
 		}
 
 		if !flags.intersects(TimeoutFlag::Abs) {
-			expire += Driver::now();
+			expire = expire.saturating_add(Driver::now());
 		}
 
 		self.queue_timer(Timeout {
@@ -239,6 +194,54 @@ impl Driver {
 
 		Ok(())
 	}
+}
+
+macro_rules! alias_func {
+	($func: ident ($($arg: ident: $type: ty),*)) => {
+		#[sync_task]
+        pub fn $func(&mut self, $($arg: $type),*) -> Result<usize> {
+			fn cancel(self: &mut Engine) -> Result<()> {
+				/* use this fn to generate the cancel closure type */
+				Ok(())
+			}
+
+			let task = self.io_engine.$func($($arg),*);
+
+			unsafe {
+				task.run(request)
+			}
+        }
+    }
+}
+
+impl Driver {
+	alias_func!(open(path: &CStr, flags: u32, mode: u32));
+
+	alias_func!(close(fd: OwnedFd));
+
+	alias_func!(read(fd: BorrowedFd<'_>, buf: &mut [u8], offset: i64));
+
+	alias_func!(write(fd: BorrowedFd<'_>, buf: &[u8], offset: i64));
+
+	alias_func!(socket(domain: u32, socket_type: u32, protocol: u32));
+
+	alias_func!(accept(socket: BorrowedFd<'_>, addr: MutPtr<()>, addrlen: &mut u32));
+
+	alias_func!(connect(socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32));
+
+	alias_func!(recv(socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32));
+
+	alias_func!(recvmsg(socket: BorrowedFd<'_>, header: &mut MessageHeader, flags: u32));
+
+	alias_func!(send(socket: BorrowedFd<'_>, buf: &[u8], flags: u32));
+
+	alias_func!(sendmsg(socket: BorrowedFd<'_>, header: &MessageHeader, flags: u32));
+
+	alias_func!(shutdown(socket: BorrowedFd<'_>, how: Shutdown));
+
+	alias_func!(bind(socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32));
+
+	alias_func!(listen(socket: BorrowedFd<'_>, backlog: i32));
 }
 
 impl Global for Driver {}

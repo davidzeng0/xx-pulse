@@ -1,5 +1,5 @@
 pub(crate) use xx_async_runtime::Context;
-pub use xx_core::coroutines::async_fn;
+pub use xx_core::coroutines::async_fn_typed as async_fn;
 
 pub mod xx_async_runtime {
 	use std::io::Result;

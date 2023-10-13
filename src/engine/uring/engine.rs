@@ -158,11 +158,11 @@ fn get_ptr<T>(map: &MemoryMap, off: u32) -> MutPtr<T> {
 	MutPtr::from(map.addr + off as usize)
 }
 
-fn get_ref<T>(map: &MemoryMap, off: u32) -> &'static mut T {
-	get_ptr::<T>(map, off).as_ref_mut()
+fn get_ref<'a, T>(map: &MemoryMap, off: u32) -> &'a mut T {
+	get_ptr::<T>(map, off).into_mut()
 }
 
-fn get_array<T>(map: &MemoryMap, off: u32, len: u32) -> &'static mut [T] {
+fn get_array<'a, T>(map: &MemoryMap, off: u32, len: u32) -> &'a mut [T] {
 	unsafe { slice::from_raw_parts_mut(get_ptr::<T>(map, off).as_ptr_mut(), len as usize) }
 }
 
@@ -206,7 +206,7 @@ impl<'a> SubmissionQueue<'a> {
 	pub fn next(&mut self) -> &mut SubmissionEntry {
 		let tail = self.tail;
 
-		self.tail += 1;
+		self.tail = self.tail.wrapping_add(1);
 		self.get_entry(tail & self.mask)
 	}
 
@@ -388,7 +388,7 @@ impl<'a> IoUring<'a> {
 		}
 
 		if submitted != 0 {
-			trace!(target: self, "<< {} operations", submitted);
+			trace!(target: self, "<< {} Operations", submitted);
 		}
 
 		self.to_submit = 0;
@@ -405,7 +405,7 @@ impl<'a> IoUring<'a> {
 			return;
 		}
 
-		trace!(target: self, ">> {} completions", tail - head);
+		trace!(target: self, ">> {} Completions", tail.wrapping_sub(head));
 
 		while tail != head {
 			let CompletionEntry { user_data, result, .. } =
@@ -416,7 +416,7 @@ impl<'a> IoUring<'a> {
 			 * update the cqe head here so that we have one more cqe
 			 * available for completions before overflow occurs
 			 */
-			head += 1;
+			head = head.wrapping_add(1);
 			self.queue.completion.khead.store(head, Ordering::Release);
 			self.to_complete -= 1;
 
