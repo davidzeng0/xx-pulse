@@ -33,21 +33,18 @@ async fn new_socket_for_addr(addr: &Address, socket_type: u32, protocol: u32) ->
 }
 
 #[async_fn]
-async fn foreach_addr<A: ToSocketAddrs, F: Fn(&Socket, &Address) -> Result<()>>(
-	addrs: A, socket_type: u32, protocol: u32, f: F
-) -> Result<Socket> {
+async fn foreach_addr<A: ToSocketAddrs, F: Fn(&Address) -> Result<Output>, Output>(
+	addrs: A, f: F
+) -> Result<Output> {
 	let mut error = None;
 
 	for addr in addrs.to_socket_addrs()? {
 		let addr = addr.into();
-		let socket = new_socket_for_addr(&addr, socket_type, protocol).await?;
 
-		match f(&socket, &addr) {
-			Ok(()) => return Ok(socket),
+		match f(&addr) {
+			Ok(out) => return Ok(out),
 			Err(err) => error = Some(err)
 		}
-
-		socket.close().await?;
 	}
 
 	Err(error.unwrap_or(Error::new(ErrorKind::InvalidInput, "No addresses")))
@@ -55,12 +52,23 @@ async fn foreach_addr<A: ToSocketAddrs, F: Fn(&Socket, &Address) -> Result<()>>(
 
 #[async_fn]
 async fn bind_addr<A: ToSocketAddrs>(addr: A, socket_type: u32, protocol: u32) -> Result<Socket> {
-	foreach_addr(addr, socket_type, protocol, |socket, addr| {
+	foreach_addr(addr, |addr| {
+		let socket = new_socket_for_addr(&addr, socket_type, protocol).await?;
+
 		set_reuse_addr(socket.fd(), true)?;
 
-		match &addr {
+		let result = match &addr {
 			Address::V4(addr) => bind(socket.fd(), addr).await,
 			Address::V6(addr) => bind(socket.fd(), addr).await
+		};
+
+		match result {
+			Ok(()) => Ok(socket),
+			Err(err) => {
+				socket.close().await?;
+
+				Err(err)
+			}
 		}
 	})
 	.await
@@ -70,12 +78,23 @@ async fn bind_addr<A: ToSocketAddrs>(addr: A, socket_type: u32, protocol: u32) -
 async fn connect_addr<A: ToSocketAddrs>(
 	addr: A, socket_type: u32, protocol: u32
 ) -> Result<Socket> {
-	foreach_addr(addr, socket_type, protocol, |socket, addr| {
+	foreach_addr(addr, |addr| {
+		let socket = new_socket_for_addr(&addr, socket_type, protocol).await?;
+
 		set_reuse_addr(socket.fd(), true)?;
 
-		match &addr {
+		let result = match &addr {
 			Address::V4(addr) => connect(socket.fd(), addr).await,
 			Address::V6(addr) => connect(socket.fd(), addr).await
+		};
+
+		match result {
+			Ok(()) => Ok(socket),
+			Err(err) => {
+				socket.close().await?;
+
+				Err(err)
+			}
 		}
 	})
 	.await
@@ -255,6 +274,15 @@ impl DatagramSocket {
 	alias_func!(set_recvbuf_size(self: &Self, size: i32) -> Result<()>);
 
 	alias_func!(set_sendbuf_size(self: &Self, size: i32) -> Result<()>);
+
+	#[async_fn]
+	pub async fn connect<A: ToSocketAddrs>(&self, addrs: A) -> Result<()> {
+		foreach_addr(addrs, |addr| match &addr {
+			Address::V4(addr) => connect(self.socket.fd(), addr).await,
+			Address::V6(addr) => connect(self.socket.fd(), addr).await
+		})
+		.await
+	}
 }
 
 #[async_trait_fn]
@@ -324,15 +352,15 @@ pub struct Udp;
 
 #[async_fn]
 impl Udp {
-	pub async fn connect(addr: &str) -> Result<DatagramSocket> {
+	pub async fn connect<A: ToSocketAddrs>(addrs: A) -> Result<DatagramSocket> {
 		let socket =
-			connect_addr(addr, SocketType::Datagram as u32, IPProtocol::Udp as u32).await?;
+			connect_addr(addrs, SocketType::Datagram as u32, IPProtocol::Udp as u32).await?;
 
 		Ok(DatagramSocket { socket })
 	}
 
-	pub async fn bind(addr: &str) -> Result<DatagramSocket> {
-		let socket = bind_addr(addr, SocketType::Datagram as u32, IPProtocol::Udp as u32).await?;
+	pub async fn bind<A: ToSocketAddrs>(addrs: A) -> Result<DatagramSocket> {
+		let socket = bind_addr(addrs, SocketType::Datagram as u32, IPProtocol::Udp as u32).await?;
 
 		Ok(DatagramSocket { socket })
 	}
