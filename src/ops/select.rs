@@ -10,52 +10,72 @@ use xx_core::{
 
 use super::*;
 
-struct SelectData<Output, T1: Task<Output, C1>, C1: Cancel, T2: Task<Output, C2>, C2: Cancel> {
+pub enum Select<O1, O2> {
+	First(O1),
+	Second(O2)
+}
+
+struct SelectData<O1, O2, T1: Task<O1, C1>, C1: Cancel, T2: Task<O2, C2>, C2: Cancel> {
 	task_1: Option<T1>,
-	req_1: Request<Output>,
+	req_1: Request<O1>,
 	cancel_1: Option<C1>,
 
 	task_2: Option<T2>,
-	req_2: Request<Output>,
+	req_2: Request<O2>,
 	cancel_2: Option<C2>,
 
-	result: Option<Output>,
-	request: RequestPtr<Output>,
+	result: Option<Select<O1, O2>>,
+	request: RequestPtr<Select<O1, O2>>,
 	sync_done: bool,
 	phantom: PhantomData<(C1, C2)>
 }
 
-impl<Output, T1: Task<Output, C1>, C1: Cancel, T2: Task<Output, C2>, C2: Cancel>
-	SelectData<Output, T1, C1, T2, C2>
+impl<O1, O2, T1: Task<O1, C1>, C1: Cancel, T2: Task<O2, C2>, C2: Cancel>
+	SelectData<O1, O2, T1, C1, T2, C2>
 {
-	fn do_select(request: RequestPtr<Output>, arg: *const (), value: Output) {
-		let mut data: MutPtr<Self> = ConstPtr::from(arg).cast();
-
-		if data.sync_done {
-			data.sync_done = false;
+	fn complete(&mut self, value: Select<O1, O2>) {
+		if self.sync_done {
+			self.sync_done = false;
 
 			return;
 		}
 
 		/*
-		 * Safety: cannot access `data` once a cancel or a complete is called,
+		 * Safety: cannot access `self` once a cancel or a complete is called,
 		 * as it may be freed by the callee
 		 */
-		if data.result.is_none() {
-			data.result = Some(value);
+		if self.result.is_none() {
+			let is_first = match &value {
+				Select::First(_) => true,
+				Select::Second(_) => false
+			};
 
-			let result = if request == ConstPtr::from(&data.req_1) {
-				unsafe { data.cancel_2.take().unwrap().run() }
+			self.result = Some(value);
+
+			let result = if is_first {
+				unsafe { self.cancel_2.take().unwrap().run() }
 			} else {
-				unsafe { data.cancel_1.take().unwrap().run() }
+				unsafe { self.cancel_1.take().unwrap().run() }
 			};
 
 			if result.is_err() {
 				warn!("Cancel returned an {:?}", result);
 			}
 		} else {
-			Request::complete(data.request, data.result.take().unwrap());
+			Request::complete(self.request, self.result.take().unwrap());
 		}
+	}
+
+	fn complete_1(_: RequestPtr<O1>, arg: *const (), value: O1) {
+		let mut data: MutPtr<Self> = ConstPtr::from(arg).cast();
+
+		data.complete(Select::First(value));
+	}
+
+	fn complete_2(_: RequestPtr<O2>, arg: *const (), value: O2) {
+		let mut data: MutPtr<Self> = ConstPtr::from(arg).cast();
+
+		data.complete(Select::Second(value));
 	}
 
 	fn new(task_1: T1, task_2: T2) -> Self {
@@ -64,10 +84,10 @@ impl<Output, T1: Task<Output, C1>, C1: Cancel, T2: Task<Output, C2>, C2: Cancel>
 		unsafe {
 			Self {
 				task_1: Some(task_1),
-				req_1: Request::new(null, Self::do_select),
+				req_1: Request::new(null, Self::complete_1),
 				cancel_1: None,
 				task_2: Some(task_2),
-				req_2: Request::new(null, Self::do_select),
+				req_2: Request::new(null, Self::complete_2),
 				cancel_2: None,
 				result: None,
 				request: ConstPtr::null(),
@@ -78,7 +98,7 @@ impl<Output, T1: Task<Output, C1>, C1: Cancel, T2: Task<Output, C2>, C2: Cancel>
 	}
 
 	#[sync_task]
-	fn select(&mut self) -> Output {
+	fn select(&mut self) -> Select<O1, O2> {
 		fn cancel(self: &mut Self) -> Result<()> {
 			let (cancel_1, cancel_2) = unsafe {
 				(
@@ -100,14 +120,14 @@ impl<Output, T1: Task<Output, C1>, C1: Cancel, T2: Task<Output, C2>, C2: Cancel>
 
 		unsafe {
 			match self.task_1.take().unwrap().run(ConstPtr::from(&self.req_1)) {
-				Progress::Done(value) => return Progress::Done(value),
-				Progress::Pending(cancel) => self.cancel_1 = Some(cancel)
+				Progress::Pending(cancel) => self.cancel_1 = Some(cancel),
+				Progress::Done(value) => return Progress::Done(Select::First(value))
 			}
 
 			match self.task_2.take().unwrap().run(ConstPtr::from(&self.req_2)) {
 				Progress::Pending(cancel) => self.cancel_2 = Some(cancel),
 				Progress::Done(value) => {
-					self.result = Some(value);
+					self.result = Some(Select::Second(value));
 					self.sync_done = true;
 
 					let result = self.cancel_1.take().unwrap().run();
@@ -131,8 +151,8 @@ impl<Output, T1: Task<Output, C1>, C1: Cancel, T2: Task<Output, C2>, C2: Cancel>
 	}
 }
 
-impl<Output, T1: Task<Output, C1>, C1: Cancel, T2: Task<Output, C2>, C2: Cancel> Global
-	for SelectData<Output, T1, C1, T2, C2>
+impl<O1, O2, T1: Task<O1, C1>, C1: Cancel, T2: Task<O2, C2>, C2: Cancel> Global
+	for SelectData<O1, O2, T1, C1, T2, C2>
 {
 	unsafe fn pinned(&mut self) {
 		let arg: MutPtr<Self> = self.into();
@@ -143,24 +163,29 @@ impl<Output, T1: Task<Output, C1>, C1: Cancel, T2: Task<Output, C2>, C2: Cancel>
 }
 
 #[async_fn]
-pub async fn select<Output, T1: AsyncTask<Context, Output>, T2: AsyncTask<Context, Output>>(
+pub async fn select_sync<O1, O2, T1: Task<O1, C1>, C1: Cancel, T2: Task<O2, C2>, C2: Cancel>(
 	task_1: T1, task_2: T2
-) -> Output {
-	let executor = internal_get_context().await.executor();
-	let driver = internal_get_driver().await;
-
-	let data = {
-		let t1 = spawn::spawn(executor, |worker| {
-			(Context::new(executor, worker, driver), task_1)
-		});
-
-		let t2 = spawn::spawn(executor, |worker| {
-			(Context::new(executor, worker, driver), task_2)
-		});
-
-		SelectData::new(t1, t2)
-	};
+) -> Select<O1, O2> {
+	let data = SelectData::new(task_1, task_2);
 
 	pin_local_mut!(data);
 	block_on(data.select()).await
+}
+
+#[async_fn]
+pub async fn select<O1, O2, T1: AsyncTask<Context, O1>, T2: AsyncTask<Context, O2>>(
+	task_1: T1, task_2: T2
+) -> Select<O1, O2> {
+	let executor = internal_get_context().await.executor();
+	let driver = internal_get_driver().await;
+
+	let task_1 = spawn::spawn(executor, |worker| {
+		(Context::new(executor, worker, driver), task_1)
+	});
+
+	let task_2 = spawn::spawn(executor, |worker| {
+		(Context::new(executor, worker, driver), task_2)
+	});
+
+	select_sync(task_1, task_2).await
 }

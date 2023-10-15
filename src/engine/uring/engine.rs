@@ -200,7 +200,7 @@ impl<'a> SubmissionQueue<'a> {
 	}
 
 	pub fn get_entry(&mut self, index: u32) -> &mut SubmissionEntry {
-		unsafe { self.entries.get_unchecked_mut(index as usize) }
+		unsafe { self.entries.get_unchecked_mut((index & self.mask) as usize) }
 	}
 
 	pub fn next(&mut self) -> &mut SubmissionEntry {
@@ -247,7 +247,7 @@ impl<'a> CompletionQueue<'a> {
 	pub fn read_ring(&self) -> (u32, u32) {
 		(
 			unsafe { *self.khead.as_ptr() },
-			self.ktail.load(Ordering::Relaxed)
+			self.ktail.load(Ordering::Acquire)
 		)
 	}
 }
@@ -309,54 +309,12 @@ impl<'a> IoUring<'a> {
 		})
 	}
 
-	fn enter(&self, wait: u32, flags: BitFlags<EnterFlag>, timeout: u64) -> Result<i32> {
-		/*
-		 * the kernel doesn't read the timespec until it's actually time to wait for
-		 * cqes avoid loss due to branching here and set EXT_ARG on every enter
-		 */
-		io_uring_enter_timeout(
-			self.ring_fd.as_fd(),
-			self.to_submit,
-			wait,
-			flags.bits(),
-			timeout
-		)
-	}
-
-	fn submit_and_wait(&mut self, get_events: bool, timeout: u64) -> Result<()> {
-		let mut flags = BitFlags::<EnterFlag>::default();
-		let mut wait = 0;
-		let mut submitted = -1;
-
-		if !get_events {
-			/* we want to flush cqring if possible, but not run any task work */
-			if self.queue.needs_flush() {
-				flags |= EnterFlag::GetEvents;
-			}
-		} else {
-			/* if there are events that we can wait for */
-			let mut events_available = self.to_complete != 0;
-
-			if timeout == 0 {
-				/* if we can't wait, only fetch outstanding events */
-				events_available &= self.queue.needs_enter();
-			} else {
-				wait = 1;
-			}
-
-			/* fast or */
-			if (self.to_submit | wait | events_available as u32) == 0 {
-				/* done */
-				return Ok(());
-			}
-
-			flags |= EnterFlag::GetEvents;
-		}
-
+	#[inline(always)]
+	fn enter<F: FnOnce(&mut Self) -> Result<i32>>(&mut self, f: F) -> Result<()> {
 		self.queue.submission.sync();
 
-		match self.enter(wait, flags, timeout) {
-			Ok(count) => submitted = count,
+		let submitted = match f(self) {
+			Ok(count) => count,
 			Err(err) => {
 				const TIMED_OUT: i32 = ErrorCodes::Time as i32;
 				const CQ_OVERFLOW: i32 = ErrorCodes::Busy as i32;
@@ -366,11 +324,13 @@ impl<'a> IoUring<'a> {
 				let code = err.raw_os_error().unwrap();
 
 				match code {
-					NO_MEM => (),
+					NO_MEM => -1,
 					TIMED_OUT | CQ_OVERFLOW | INTERRUPTED => {
 						if self.to_submit == 0 {
 							return Ok(());
 						}
+
+						-1
 					}
 
 					_ => {
@@ -380,30 +340,89 @@ impl<'a> IoUring<'a> {
 			}
 		};
 
-		if submitted != self.to_submit as i32 {
-			return Err(Error::new(
-				ErrorKind::OutOfMemory,
-				format!("Submitted {} / {}", submitted, self.to_submit)
-			));
-		}
+		if self.to_submit != 0 {
+			if submitted != self.to_submit as i32 {
+				return Err(Error::new(
+					ErrorKind::OutOfMemory,
+					format!("Submitted {} / {}", submitted, self.to_submit)
+				));
+			}
 
-		if submitted != 0 {
 			trace!(target: self, "<< {} Operations", submitted);
-		}
 
-		self.to_submit = 0;
-		self.to_complete += submitted as u64;
+			self.to_submit = 0;
+			self.to_complete += submitted as u64;
+		}
 
 		Ok(())
 	}
 
-	fn run_events(&mut self) {
-		let (mut head, tail) = self.queue.completion.read_ring();
-		let mask = self.queue.completion.mask;
+	#[inline(always)]
+	fn flush(&mut self) -> Result<()> {
+		let mut flags = BitFlags::<EnterFlag>::default();
 
+		/* we want to flush cqring if possible, but not run any task work */
+		if self.queue.needs_flush() {
+			flags |= EnterFlag::GetEvents;
+		}
+
+		self.enter(|this| {
+			io_uring_enter2(
+				this.ring_fd.as_fd(),
+				this.to_submit,
+				0,
+				flags.bits(),
+				0,
+				SIGSET_SIZE
+			)
+		})
+	}
+
+	#[inline(always)]
+	fn submit_and_wait(&mut self, timeout: u64) -> Result<(u32, u32)> {
+		let flags = make_bitflags!(EnterFlag::{GetEvents});
+		let mut wait = 0;
+
+		if timeout != 0 {
+			wait = 1;
+		} else if self.to_submit == 0 {
+			let ring = self.queue.completion.read_ring();
+
+			if ring.0 != ring.1 {
+				/* already have completions */
+				return Ok(ring);
+			}
+
+			if !self.queue.needs_enter() {
+				/* no pending completions, no submissions, nothing to wait for, nothing to */
+				return Ok(ring);
+			}
+		}
+
+		self.enter(|this| {
+			/*
+			 * the kernel doesn't read the timespec until it's actually time to wait for
+			 * cqes avoid loss due to branching here and set EXT_ARG on every enter
+			 */
+			io_uring_enter_timeout(
+				this.ring_fd.as_fd(),
+				this.to_submit,
+				wait,
+				flags.bits(),
+				timeout
+			)
+		})?;
+
+		Ok(self.queue.completion.read_ring())
+	}
+
+	#[inline(always)]
+	fn run_events(&mut self, (mut head, tail): (u32, u32)) {
 		if tail == head {
 			return;
 		}
+
+		let mask = self.queue.completion.mask;
 
 		trace!(target: self, ">> {} Completions", tail.wrapping_sub(head));
 
@@ -420,22 +439,20 @@ impl<'a> IoUring<'a> {
 			self.queue.completion.khead.store(head, Ordering::Release);
 			self.to_complete -= 1;
 
-			let request = ConstPtr::from(user_data as *const Request<Result<usize>>);
-
 			Request::complete(
-				request,
+				ConstPtr::from(user_data as *const Request<Result<usize>>),
 				result_from_int(result as isize).map(|result| result as usize)
 			);
 		}
 	}
 
+	#[inline(always)]
 	pub fn push(&mut self, request: &SubmissionEntry) {
 		*self.queue.submission.next() = *request;
 		self.to_submit += 1;
 
 		if self.to_submit >= self.queue.submission.capacity {
-			self.submit_and_wait(false, 0)
-				.expect("Failed to flush submission ring");
+			self.flush().expect("Failed to flush submission ring");
 		}
 	}
 }
@@ -445,14 +462,15 @@ impl EngineImpl for IoUring<'_> {
 		self.to_complete != 0 || self.to_submit != 0
 	}
 
+	#[inline(always)]
 	fn work(&mut self, timeout: u64) -> Result<()> {
-		self.submit_and_wait(true, timeout)
-			.expect("Failed to get events");
-		self.run_events();
+		let events = self.submit_and_wait(timeout).expect("Failed to get events");
+		self.run_events(events);
 
 		Ok(())
 	}
 
+	#[inline(always)]
 	unsafe fn cancel(&mut self, request: RequestPtr<()>) -> Result<()> {
 		let mut op = Op::cancel(0);
 
@@ -464,6 +482,7 @@ impl EngineImpl for IoUring<'_> {
 		Ok(())
 	}
 
+	#[inline(always)]
 	unsafe fn open(
 		&mut self, path: &CStr, flags: u32, mode: u32, request: RequestPtr<Result<usize>>
 	) -> Option<Result<usize>> {
@@ -476,6 +495,7 @@ impl EngineImpl for IoUring<'_> {
 		None
 	}
 
+	#[inline(always)]
 	unsafe fn close(
 		&mut self, fd: OwnedFd, request: RequestPtr<Result<usize>>
 	) -> Option<Result<usize>> {
@@ -489,6 +509,7 @@ impl EngineImpl for IoUring<'_> {
 		None
 	}
 
+	#[inline(always)]
 	unsafe fn read(
 		&mut self, fd: BorrowedFd<'_>, buf: &mut [u8], offset: i64,
 		request: RequestPtr<Result<usize>>
@@ -508,6 +529,7 @@ impl EngineImpl for IoUring<'_> {
 		None
 	}
 
+	#[inline(always)]
 	unsafe fn write(
 		&mut self, fd: BorrowedFd<'_>, buf: &[u8], offset: i64, request: RequestPtr<Result<usize>>
 	) -> Option<Result<usize>> {
@@ -526,6 +548,7 @@ impl EngineImpl for IoUring<'_> {
 		None
 	}
 
+	#[inline(always)]
 	unsafe fn socket(
 		&mut self, domain: u32, socket_type: u32, protocol: u32, request: RequestPtr<Result<usize>>
 	) -> Option<Result<usize>> {
@@ -538,6 +561,7 @@ impl EngineImpl for IoUring<'_> {
 		None
 	}
 
+	#[inline(always)]
 	unsafe fn accept(
 		&mut self, socket: BorrowedFd<'_>, addr: MutPtr<()>, addrlen: &mut u32,
 		request: RequestPtr<Result<usize>>
@@ -551,6 +575,7 @@ impl EngineImpl for IoUring<'_> {
 		None
 	}
 
+	#[inline(always)]
 	unsafe fn connect(
 		&mut self, socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32,
 		request: RequestPtr<Result<usize>>
@@ -564,6 +589,7 @@ impl EngineImpl for IoUring<'_> {
 		None
 	}
 
+	#[inline(always)]
 	unsafe fn recv(
 		&mut self, socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32,
 		request: RequestPtr<Result<usize>>
@@ -582,6 +608,7 @@ impl EngineImpl for IoUring<'_> {
 		None
 	}
 
+	#[inline(always)]
 	unsafe fn recvmsg(
 		&mut self, socket: BorrowedFd<'_>, header: &mut MessageHeader, flags: u32,
 		request: RequestPtr<Result<usize>>
@@ -595,6 +622,7 @@ impl EngineImpl for IoUring<'_> {
 		None
 	}
 
+	#[inline(always)]
 	unsafe fn send(
 		&mut self, socket: BorrowedFd<'_>, buf: &[u8], flags: u32,
 		request: RequestPtr<Result<usize>>
@@ -613,6 +641,7 @@ impl EngineImpl for IoUring<'_> {
 		None
 	}
 
+	#[inline(always)]
 	unsafe fn sendmsg(
 		&mut self, socket: BorrowedFd<'_>, header: &MessageHeader, flags: u32,
 		request: RequestPtr<Result<usize>>
@@ -626,6 +655,7 @@ impl EngineImpl for IoUring<'_> {
 		None
 	}
 
+	#[inline(always)]
 	unsafe fn shutdown(
 		&mut self, socket: BorrowedFd<'_>, how: Shutdown, request: RequestPtr<Result<usize>>
 	) -> Option<Result<usize>> {
@@ -638,6 +668,7 @@ impl EngineImpl for IoUring<'_> {
 		None
 	}
 
+	#[inline(always)]
 	unsafe fn bind(
 		&mut self, socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32,
 		_: RequestPtr<Result<usize>>
@@ -645,6 +676,7 @@ impl EngineImpl for IoUring<'_> {
 		Some(bind_raw(socket, addr, addrlen).map(|_| 0))
 	}
 
+	#[inline(always)]
 	unsafe fn listen(
 		&mut self, socket: BorrowedFd<'_>, backlog: i32, _: RequestPtr<Result<usize>>
 	) -> Option<Result<usize>> {

@@ -102,8 +102,8 @@ macro_rules! engine_task {
 			}
 
 			match unsafe { self.inner.$func($($arg),*, request) } {
+				None => Progress::Pending(cancel(self, request)),
 				Some(result) => Progress::Done(result),
-				None => Progress::Pending(cancel(self, request))
 			}
         }
     }

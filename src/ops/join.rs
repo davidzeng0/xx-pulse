@@ -134,24 +134,29 @@ impl<O1, O2, T1: Task<O1, C1>, C1: Cancel, T2: Task<O2, C2>, C2: Cancel> Global
 }
 
 #[async_fn]
+pub async fn join_sync<O1, O2, T1: Task<O1, C1>, C1: Cancel, T2: Task<O2, C2>, C2: Cancel>(
+	task_1: T1, task_2: T2
+) -> (O1, O2) {
+	let data = JoinData::new(task_1, task_2);
+
+	pin_local_mut!(data);
+	block_on(data.join()).await
+}
+
+#[async_fn]
 pub async fn join<O1, O2, T1: AsyncTask<Context, O1>, T2: AsyncTask<Context, O2>>(
 	task_1: T1, task_2: T2
 ) -> (O1, O2) {
 	let executor = internal_get_context().await.executor();
 	let driver = internal_get_driver().await;
 
-	let data = {
-		let t1 = spawn::spawn(executor, |worker| {
-			(Context::new(executor, worker, driver), task_1)
-		});
+	let task_1 = spawn::spawn(executor, |worker| {
+		(Context::new(executor, worker, driver), task_1)
+	});
 
-		let t2 = spawn::spawn(executor, |worker| {
-			(Context::new(executor, worker, driver), task_2)
-		});
+	let task_2 = spawn::spawn(executor, |worker| {
+		(Context::new(executor, worker, driver), task_2)
+	});
 
-		JoinData::new(t1, t2)
-	};
-
-	pin_local_mut!(data);
-	block_on(data.join()).await
+	join_sync(task_1, task_2).await
 }
