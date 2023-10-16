@@ -28,14 +28,22 @@ pub mod xx_async_runtime {
 		worker: Handle<Worker>,
 		driver: Handle<Driver>,
 
-		cancel: Option<Closure<*const (), (), Result<()>>>
+		cancel: Option<Closure<*const (), (), Result<()>>>,
+
+		interrupted: bool
 	}
 
 	impl Context {
 		pub(crate) fn new(
 			executor: Handle<Executor>, worker: Handle<Worker>, driver: Handle<Driver>
 		) -> Context {
-			Context { executor, worker, driver, cancel: None }
+			Context {
+				executor,
+				worker,
+				driver,
+				cancel: None,
+				interrupted: false
+			}
 		}
 
 		pub(crate) fn executor(&mut self) -> Handle<Executor> {
@@ -89,7 +97,16 @@ pub mod xx_async_runtime {
 		}
 
 		fn interrupt(&mut self) -> Result<()> {
+			self.interrupted = true;
 			self.cancel.take().unwrap().call(())
+		}
+
+		fn interrupted(&self) -> bool {
+			self.interrupted
+		}
+
+		fn clear_interrupt(&mut self) {
+			self.interrupted = false;
 		}
 	}
 
