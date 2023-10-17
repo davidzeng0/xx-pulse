@@ -1,7 +1,6 @@
-use std::io::Result;
-
 use xx_core::{
 	coroutines::{runtime::block_on, spawn, task::AsyncTask},
+	error::Result,
 	pointer::{ConstPtr, MutPtr},
 	task::{
 		closure::CancelClosure,
@@ -148,6 +147,9 @@ impl<Output> Drop for JoinHandle<Output> {
 	}
 }
 
+/// Spawn a new async task
+///
+/// Returns a join handle which may be used to get the result from the task
 #[async_fn]
 pub async fn spawn<Output, T: AsyncTask<Context, Output>>(task: T) -> JoinHandle<Output> {
 	Spawn::run(task).await

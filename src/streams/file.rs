@@ -1,5 +1,5 @@
 use std::{
-	io::{Result, SeekFrom},
+	io::SeekFrom,
 	os::fd::{AsFd, OwnedFd},
 	path::Path
 };
@@ -7,26 +7,50 @@ use std::{
 use xx_core::{
 	async_std::io::{Close, Read, Seek, Write},
 	coroutines::async_trait_fn,
-	os::fcntl::OpenFlag
+	error::{Error, ErrorKind, Result},
+	os::{
+		fcntl::OpenFlag,
+		stat::{Statx, StatxMask}
+	}
 };
 
 use crate::{async_runtime::*, ops::io::*};
 
 pub struct File {
 	fd: OwnedFd,
-	offset: u64
+	offset: u64,
+	length: u64
 }
 
 #[async_fn]
 impl File {
 	pub async fn open(path: impl AsRef<Path>) -> Result<File> {
-		Ok(File {
-			fd: open(path.as_ref(), OpenFlag::ReadOnly, 0).await?,
-			offset: 0
-		})
+		let mut stat = Statx::new();
+
+		statx(path.as_ref(), 0, 0, &mut stat).await?;
+
+		if stat.mask & (StatxMask::Size as u32) == 0 {
+			Err(Error::new(ErrorKind::Other, "Failed to query file size"))
+		} else {
+			Ok(File {
+				fd: open(path.as_ref(), OpenFlag::ReadOnly, 0).await?,
+				offset: 0,
+				length: stat.size
+			})
+		}
 	}
 
-	pub async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+	pub async fn read(&mut self, mut buf: &mut [u8]) -> Result<usize> {
+		let remaining = (self.length - self.offset) as usize;
+
+		if remaining == 0 {
+			return Ok(0);
+		}
+
+		if buf.len() > remaining {
+			buf = &mut buf[0..remaining];
+		}
+
 		let read = read(self.fd.as_fd(), buf, self.offset as i64).await?;
 
 		self.offset += read as u64;
@@ -43,14 +67,14 @@ impl File {
 	}
 
 	pub async fn flush(&mut self) -> Result<()> {
-		todo!();
+		fsync(self.fd.as_fd()).await
 	}
 
 	pub async fn seek(&mut self, seek: SeekFrom) -> Result<u64> {
 		match seek {
 			SeekFrom::Start(pos) => self.offset = pos,
 			SeekFrom::Current(rel) => self.offset = self.offset.wrapping_add_signed(rel),
-			SeekFrom::End(_) => todo!()
+			SeekFrom::End(rel) => self.offset = self.length.wrapping_add_signed(rel)
 		}
 
 		Ok(self.offset)
@@ -87,6 +111,14 @@ impl Write<Context> for File {
 impl Seek<Context> for File {
 	async fn seek(&mut self, seek: SeekFrom) -> Result<u64> {
 		self.seek(seek).await
+	}
+
+	fn stream_len_fast(&self) -> bool {
+		true
+	}
+
+	async fn stream_len(&mut self) -> Result<u64> {
+		Ok(self.length)
 	}
 
 	fn stream_position_fast(&self) -> bool {

@@ -2,11 +2,10 @@ pub(crate) use xx_async_runtime::Context;
 pub use xx_core::coroutines::async_fn_typed as async_fn;
 
 pub mod xx_async_runtime {
-	use std::io::Result;
-
 	use xx_core::{
 		closure::Closure,
 		coroutines::{env::AsyncContext, executor::Executor, task::AsyncTask, worker::Worker},
+		error::{Error, ErrorKind, Result},
 		pointer::{ConstPtr, MutPtr},
 		task::{
 			block_on::block_on,
@@ -30,6 +29,7 @@ pub mod xx_async_runtime {
 
 		cancel: Option<Closure<*const (), (), Result<()>>>,
 
+		guards: u32,
 		interrupted: bool
 	}
 
@@ -42,6 +42,7 @@ pub mod xx_async_runtime {
 				worker,
 				driver,
 				cancel: None,
+				guards: 0,
 				interrupted: false
 			}
 		}
@@ -97,8 +98,15 @@ pub mod xx_async_runtime {
 		}
 
 		fn interrupt(&mut self) -> Result<()> {
-			self.interrupted = true;
-			self.cancel.take().unwrap().call(())
+			if self.guards > 0 {
+				Err(Error::new(ErrorKind::Other, "Interrupt is prevented"))
+			} else {
+				self.interrupted = true;
+				self.cancel
+					.take()
+					.expect("Task interrupted while running")
+					.call(())
+			}
 		}
 
 		fn interrupted(&self) -> bool {
@@ -107,6 +115,12 @@ pub mod xx_async_runtime {
 
 		fn clear_interrupt(&mut self) {
 			self.interrupted = false;
+		}
+
+		fn interrupt_guard(&mut self, count: i32) {
+			self.guards
+				.checked_add_signed(count)
+				.expect("Interrupt guards count overflowed");
 		}
 	}
 

@@ -2,15 +2,16 @@ use std::{
 	cmp::Ordering,
 	collections::BTreeSet,
 	ffi::CStr,
-	io::{Error, ErrorKind, Result},
 	os::fd::{BorrowedFd, OwnedFd},
 	time::Duration
 };
 
 use enumflags2::{bitflags, BitFlags};
 use xx_core::{
+	error::{Error, ErrorKind, Result},
 	os::{
 		socket::{MessageHeader, Shutdown},
+		stat::Statx,
 		time::{self, ClockId}
 	},
 	pointer::{ConstPtr, MutPtr},
@@ -242,6 +243,10 @@ impl Driver {
 	alias_func!(bind(socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32));
 
 	alias_func!(listen(socket: BorrowedFd<'_>, backlog: i32));
+
+	alias_func!(fsync(file: BorrowedFd<'_>));
+
+	alias_func!(statx(path: &CStr, flags: u32, mask: u32, statx: &mut Statx));
 }
 
 impl Global for Driver {}

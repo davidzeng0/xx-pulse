@@ -1,11 +1,14 @@
 use std::{
 	ffi::CStr,
-	io::Result,
 	os::fd::{BorrowedFd, OwnedFd}
 };
 
 use xx_core::{
-	os::socket::{MessageHeader, Shutdown},
+	error::Result,
+	os::{
+		socket::{MessageHeader, Shutdown},
+		stat::Statx
+	},
 	pointer::{ConstPtr, MutPtr},
 	task::{sync_task, Progress, RequestPtr}
 };
@@ -83,6 +86,15 @@ pub trait EngineImpl {
 	unsafe fn listen(
 		&mut self, socket: BorrowedFd<'_>, backlog: i32, request: RequestPtr<Result<usize>>
 	) -> Option<Result<usize>>;
+
+	unsafe fn fsync(
+		&mut self, file: BorrowedFd<'_>, request: RequestPtr<Result<usize>>
+	) -> Option<Result<usize>>;
+
+	unsafe fn statx(
+		&mut self, path: &CStr, flags: u32, mask: u32, statx: &mut Statx,
+		request: RequestPtr<Result<usize>>
+	) -> Option<Result<usize>>;
 }
 
 /// I/O Backend
@@ -154,4 +166,8 @@ impl Engine {
 	engine_task!(bind(socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32));
 
 	engine_task!(listen(socket: BorrowedFd<'_>, backlog: i32));
+
+	engine_task!(fsync(file: BorrowedFd<'_>));
+
+	engine_task!(statx(path: &CStr, flags: u32, mask: u32, statx: &mut Statx));
 }

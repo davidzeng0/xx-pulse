@@ -6,7 +6,8 @@ use xx_core::{
 		io_uring::{AsyncCancelFlag, OpCode, SubmissionEntry},
 		iovec::IoVec,
 		openat2::OpenHow,
-		socket::{MessageHeader, Shutdown}
+		socket::{MessageHeader, Shutdown},
+		stat::Statx
 	},
 	pointer::{ConstPtr, MutPtr}
 };
@@ -461,7 +462,9 @@ impl Op {
 		entry
 	}
 
-	pub fn statx(fd: i32, path: &CStr, flags: u32, mask: u32, statx: usize) -> SubmissionEntry {
+	pub fn statx(
+		fd: i32, path: &CStr, flags: u32, mask: u32, statx: &mut Statx
+	) -> SubmissionEntry {
 		let mut entry = new_op(OpCode::Statx);
 
 		rw_fixed(
@@ -469,7 +472,7 @@ impl Op {
 			fd,
 			ConstPtr::from(path).as_raw_int(),
 			mask,
-			statx as u64,
+			MutPtr::from(statx).as_raw_int() as u64,
 			flags,
 			0
 		);

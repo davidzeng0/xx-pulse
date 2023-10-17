@@ -1,7 +1,6 @@
-use std::io::Result;
-
 use xx_core::{
 	coroutines::{executor::Executor, spawn::spawn, task::AsyncTask},
+	error::Result,
 	task::{
 		block_on::block_on,
 		env::{Boxed, Global, Handle}

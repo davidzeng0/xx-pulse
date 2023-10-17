@@ -1,6 +1,7 @@
-use std::{io::Result, time::Duration};
+use std::time::Duration;
 
 use enumflags2::{bitflags, make_bitflags, BitFlags};
+use xx_core::error::Result;
 
 use crate::{
 	async_runtime::*,

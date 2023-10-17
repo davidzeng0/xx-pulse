@@ -1,5 +1,4 @@
 use std::{
-	io::{Error, ErrorKind, Result},
 	mem::{size_of, size_of_val},
 	net::{SocketAddr, ToSocketAddrs},
 	os::fd::{AsFd, BorrowedFd, OwnedFd}
@@ -8,12 +7,13 @@ use std::{
 use xx_core::{
 	async_std::io::{Close, Read, Write},
 	coroutines::{async_trait_fn, runtime::check_interrupt},
+	error::{Error, ErrorKind, Result},
 	os::{
 		inet::{Address, AddressStorage, IpProtocol},
 		iovec::IoVec,
 		socket::{
-			set_recvbuf_size, set_reuse_addr, set_sendbuf_size, set_tcp_keepalive, AddressFamily,
-			MessageHeader, Shutdown, SocketType, MAX_BACKLOG
+			set_recvbuf_size, set_reuse_addr, set_sendbuf_size, set_tcp_keepalive, set_tcp_nodelay,
+			AddressFamily, MessageHeader, Shutdown, SocketType, MAX_BACKLOG
 		}
 	},
 	pointer::*
@@ -188,18 +188,22 @@ impl Socket {
 	}
 
 	pub async fn set_recvbuf_size(&self, size: i32) -> Result<()> {
+		check_interrupt().await?;
 		set_recvbuf_size(self.fd(), size)
 	}
 
 	pub async fn set_sendbuf_size(&self, size: i32) -> Result<()> {
+		check_interrupt().await?;
 		set_sendbuf_size(self.fd(), size)
 	}
 
-	pub async fn set_tcp_nodelay(&self, size: i32) -> Result<()> {
-		set_sendbuf_size(self.fd(), size)
+	pub async fn set_tcp_nodelay(&self, enable: bool) -> Result<()> {
+		check_interrupt().await?;
+		set_tcp_nodelay(self.fd(), enable)
 	}
 
 	pub async fn set_tcp_keepalive(&self, enable: bool, idle: i32) -> Result<()> {
+		check_interrupt().await?;
 		set_tcp_keepalive(self.fd(), enable, idle)
 	}
 }
@@ -240,7 +244,7 @@ impl StreamSocket {
 
 	alias_func!(set_sendbuf_size(self: &Self, size: i32) -> Result<()>);
 
-	alias_func!(set_tcp_nodelay(self: &Self, size: i32) -> Result<()>);
+	alias_func!(set_tcp_nodelay(self: &Self, enable: bool) -> Result<()>);
 
 	alias_func!(set_tcp_keepalive(self: &Self, enable: bool, idle: i32) -> Result<()>);
 }

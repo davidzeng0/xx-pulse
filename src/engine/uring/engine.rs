@@ -1,7 +1,6 @@
 use std::{
 	cmp::max,
 	ffi::CStr,
-	io::{Error, ErrorKind, Result},
 	mem::{size_of, zeroed},
 	os::fd::{AsFd, AsRawFd, BorrowedFd, IntoRawFd, OwnedFd},
 	slice,
@@ -10,12 +9,14 @@ use std::{
 
 use enumflags2::{make_bitflags, BitFlags};
 use xx_core::{
+	error::{Error, ErrorKind, Result},
 	os::{
 		error::{result_from_int, ErrorCodes},
 		io_uring::*,
 		mman::*,
 		openat::OpenAt,
-		socket::{bind_raw, listen, MessageHeader, Shutdown}
+		socket::{bind_raw, listen, MessageHeader, Shutdown},
+		stat::Statx
 	},
 	pointer::{ConstPtr, MutPtr},
 	task::{Request, RequestPtr},
@@ -316,16 +317,14 @@ impl<'a> IoUring<'a> {
 		let submitted = match f(self) {
 			Ok(count) => count,
 			Err(err) => {
-				const TIMED_OUT: i32 = ErrorCodes::Time as i32;
-				const CQ_OVERFLOW: i32 = ErrorCodes::Busy as i32;
-				const INTERRUPTED: i32 = ErrorCodes::Intr as i32;
-				const NO_MEM: i32 = ErrorCodes::Again as i32;
+				match err.os_error().unwrap() {
+					/* no memory to submit all */
+					ErrorCodes::Again => -1,
 
-				let code = err.raw_os_error().unwrap();
-
-				match code {
-					NO_MEM => -1,
-					TIMED_OUT | CQ_OVERFLOW | INTERRUPTED => {
+					ErrorCodes::Time |
+					ErrorCodes::Intr |
+					/* cq overflowed */
+					ErrorCodes::Busy => {
 						if self.to_submit == 0 {
 							return Ok(());
 						}
@@ -681,5 +680,38 @@ impl EngineImpl for IoUring<'_> {
 		&mut self, socket: BorrowedFd<'_>, backlog: i32, _: RequestPtr<Result<usize>>
 	) -> Option<Result<usize>> {
 		Some(listen(socket, backlog).map(|_| 0))
+	}
+
+	#[inline(always)]
+	unsafe fn fsync(
+		&mut self, file: BorrowedFd<'_>, request: RequestPtr<Result<usize>>
+	) -> Option<Result<usize>> {
+		let mut op = Op::fsync(file.as_raw_fd(), 0);
+
+		op.user_data = request.as_raw_int() as u64;
+
+		self.push(&op);
+
+		None
+	}
+
+	#[inline(always)]
+	unsafe fn statx(
+		&mut self, path: &CStr, flags: u32, mask: u32, statx: &mut Statx,
+		request: RequestPtr<Result<usize>>
+	) -> Option<Result<usize>> {
+		let mut op = Op::statx(
+			OpenAt::CurrentWorkingDirectory as i32,
+			path,
+			flags,
+			mask,
+			statx
+		);
+
+		op.user_data = request.as_raw_int() as u64;
+
+		self.push(&op);
+
+		None
 	}
 }
