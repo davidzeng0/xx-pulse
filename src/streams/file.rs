@@ -47,9 +47,9 @@ impl File {
 			return Ok(0);
 		}
 
-		if buf.len() > remaining {
-			buf = &mut buf[0..remaining];
-		}
+		let min = buf.len().min(remaining);
+
+		buf = unsafe { buf.get_unchecked_mut(0..min) };
 
 		let read = read(self.fd.as_fd(), buf, self.offset as i64).await?;
 
@@ -91,25 +91,25 @@ impl File {
 
 #[async_trait_fn]
 impl Read<Context> for File {
-	async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+	async fn async_read(&mut self, buf: &mut [u8]) -> Result<usize> {
 		self.read(buf).await
 	}
 }
 
 #[async_trait_fn]
 impl Write<Context> for File {
-	async fn write(&mut self, buf: &[u8]) -> Result<usize> {
+	async fn async_write(&mut self, buf: &[u8]) -> Result<usize> {
 		self.write(buf).await
 	}
 
-	async fn flush(&mut self) -> Result<()> {
+	async fn async_flush(&mut self) -> Result<()> {
 		self.flush().await
 	}
 }
 
 #[async_trait_fn]
 impl Seek<Context> for File {
-	async fn seek(&mut self, seek: SeekFrom) -> Result<u64> {
+	async fn async_seek(&mut self, seek: SeekFrom) -> Result<u64> {
 		self.seek(seek).await
 	}
 
@@ -117,7 +117,7 @@ impl Seek<Context> for File {
 		true
 	}
 
-	async fn stream_len(&mut self) -> Result<u64> {
+	async fn async_stream_len(&mut self) -> Result<u64> {
 		Ok(self.length)
 	}
 
@@ -125,14 +125,14 @@ impl Seek<Context> for File {
 		true
 	}
 
-	async fn stream_position(&mut self) -> Result<u64> {
+	async fn async_stream_position(&mut self) -> Result<u64> {
 		self.stream_position().await
 	}
 }
 
 #[async_trait_fn]
 impl Close<Context> for File {
-	async fn close(self) -> Result<()> {
+	async fn async_close(self) -> Result<()> {
 		self.close().await
 	}
 }

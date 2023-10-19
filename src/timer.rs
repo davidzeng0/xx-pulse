@@ -32,6 +32,7 @@ impl Timer {
 	}
 
 	#[async_fn]
+	#[inline(always)]
 	pub async fn next(&mut self) -> Result<()> {
 		if self.delay == 0 {
 			return Ok(());

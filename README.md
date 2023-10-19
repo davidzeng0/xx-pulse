@@ -2,7 +2,7 @@
 A zero[^1] overhead library for asynchronous tasks, using [fibers](https://github.com/davidzeng0/xx-core/blob/main/src/coroutines/README.md).
 
 Available I/O Backends:
-- io_uring
+- io_uring (requires kernel version >=6.1)
 
 ## Note: this library is currently not unwind safe.
 Catching an unwind may lead to memory leaks.

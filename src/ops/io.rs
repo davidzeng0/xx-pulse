@@ -44,12 +44,14 @@ pub async fn close(fd: OwnedFd) -> Result<()> {
 }
 
 #[async_fn]
+#[inline(always)]
 pub async fn read(fd: BorrowedFd<'_>, buf: &mut [u8], offset: i64) -> Result<usize> {
 	check_interrupt().await?;
 	block_on(internal_get_driver().await.read(fd, buf, offset)).await
 }
 
 #[async_fn]
+#[inline(always)]
 pub async fn write(fd: BorrowedFd<'_>, buf: &[u8], offset: i64) -> Result<usize> {
 	check_interrupt().await?;
 	block_on(internal_get_driver().await.write(fd, buf, offset)).await
@@ -102,12 +104,14 @@ pub async fn connect<A>(socket: BorrowedFd<'_>, addr: &A) -> Result<()> {
 }
 
 #[async_fn]
+#[inline(always)]
 pub async fn recv(socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32) -> Result<usize> {
 	check_interrupt().await?;
 	block_on(internal_get_driver().await.recv(socket, buf, flags)).await
 }
 
 #[async_fn]
+#[inline(always)]
 pub async fn recvmsg(
 	socket: BorrowedFd<'_>, header: &mut MessageHeader, flags: u32
 ) -> Result<usize> {
@@ -116,12 +120,14 @@ pub async fn recvmsg(
 }
 
 #[async_fn]
+#[inline(always)]
 pub async fn send(socket: BorrowedFd<'_>, buf: &[u8], flags: u32) -> Result<usize> {
 	check_interrupt().await?;
 	block_on(internal_get_driver().await.send(socket, buf, flags)).await
 }
 
 #[async_fn]
+#[inline(always)]
 pub async fn sendmsg(socket: BorrowedFd<'_>, header: &MessageHeader, flags: u32) -> Result<usize> {
 	check_interrupt().await?;
 	block_on(internal_get_driver().await.sendmsg(socket, header, flags)).await

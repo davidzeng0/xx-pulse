@@ -162,6 +162,7 @@ impl Driver {
 	}
 
 	#[sync_task]
+	#[inline(always)]
 	pub fn timeout(&mut self, mut expire: u64, flags: BitFlags<TimeoutFlag>) -> Result<()> {
 		fn cancel(self: &mut Self, expire: u64) -> Result<()> {
 			self.cancel_timer(Timeout { expire, request, idle: false })
@@ -180,7 +181,16 @@ impl Driver {
 		Progress::Pending(cancel(self, expire, request))
 	}
 
-	pub fn run(&mut self) -> Result<()> {
+	#[inline(always)]
+	pub fn park(&mut self) -> Result<()> {
+		let timeout = self.run_timers();
+
+		self.io_engine.work(timeout)
+	}
+
+	pub fn exit(&mut self) -> Result<()> {
+		self.expire_all_timers();
+
 		loop {
 			let timeout = self.run_timers();
 
@@ -190,8 +200,6 @@ impl Driver {
 
 			self.io_engine.work(timeout)?;
 		}
-
-		self.expire_all_timers();
 
 		Ok(())
 	}

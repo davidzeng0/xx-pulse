@@ -72,10 +72,12 @@ pub mod xx_async_runtime {
 	}
 
 	impl AsyncContext for Context {
+		#[inline(always)]
 		fn run<T: AsyncTask<Context, Output>, Output>(&mut self, task: T) -> Output {
 			task.run(self.into())
 		}
 
+		#[inline(always)]
 		fn block_on<T: Task<Output, C>, C: Cancel, Output>(&mut self, task: T) -> Output {
 			let handle = Handle::from(self);
 

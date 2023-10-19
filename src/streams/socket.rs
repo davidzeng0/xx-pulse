@@ -251,18 +251,18 @@ impl StreamSocket {
 
 #[async_trait_fn]
 impl Read<Context> for StreamSocket {
-	async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+	async fn async_read(&mut self, buf: &mut [u8]) -> Result<usize> {
 		self.recv(buf, 0).await
 	}
 }
 
 #[async_trait_fn]
 impl Write<Context> for StreamSocket {
-	async fn write(&mut self, buf: &[u8]) -> Result<usize> {
+	async fn async_write(&mut self, buf: &[u8]) -> Result<usize> {
 		self.send(buf, 0).await
 	}
 
-	async fn flush(&mut self) -> Result<()> {
+	async fn async_flush(&mut self) -> Result<()> {
 		/* sockets don't need flushing. set nodelay if you want immediate writes */
 		Ok(())
 	}
@@ -270,7 +270,7 @@ impl Write<Context> for StreamSocket {
 
 #[async_trait_fn]
 impl Close<Context> for StreamSocket {
-	async fn close(self) -> Result<()> {
+	async fn async_close(self) -> Result<()> {
 		self.close().await
 	}
 }
@@ -306,25 +306,25 @@ impl DatagramSocket {
 
 #[async_trait_fn]
 impl Read<Context> for DatagramSocket {
-	async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+	async fn async_read(&mut self, buf: &mut [u8]) -> Result<usize> {
 		self.recv(buf, 0).await
 	}
 }
 
 #[async_trait_fn]
 impl Write<Context> for DatagramSocket {
-	async fn write(&mut self, buf: &[u8]) -> Result<usize> {
+	async fn async_write(&mut self, buf: &[u8]) -> Result<usize> {
 		self.send(buf, 0).await
 	}
 
-	async fn flush(&mut self) -> Result<()> {
+	async fn async_flush(&mut self) -> Result<()> {
 		Ok(())
 	}
 }
 
 #[async_trait_fn]
 impl Close<Context> for DatagramSocket {
-	async fn close(self) -> Result<()> {
+	async fn async_close(self) -> Result<()> {
 		self.close().await
 	}
 }

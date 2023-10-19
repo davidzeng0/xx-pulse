@@ -108,6 +108,7 @@ pub struct Engine {
 macro_rules! engine_task {
 	($func: ident ($($arg: ident: $type: ty),*)) => {
 		#[sync_task]
+		#[inline(always)]
         pub fn $func(&mut self, $($arg: $type),*) -> Result<usize> {
 			fn cancel(self: &mut Self) -> Result<()> {
 				unsafe { self.inner.cancel(request.cast()) }
