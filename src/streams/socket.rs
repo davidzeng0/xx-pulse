@@ -1,4 +1,5 @@
 use std::{
+	io::{IoSlice, IoSliceMut},
 	mem::{size_of, size_of_val},
 	net::{SocketAddr, ToSocketAddrs},
 	os::fd::{AsFd, BorrowedFd, OwnedFd}
@@ -130,8 +131,30 @@ impl Socket {
 		recv(self.fd(), buf, flags).await
 	}
 
+	pub async fn read_vectored(&self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize> {
+		let mut header = MessageHeader {
+			iov: bufs.as_ptr() as *mut _,
+			iov_len: bufs.len(),
+
+			..Default::default()
+		};
+
+		recvmsg(self.fd(), &mut header, 0).await
+	}
+
 	pub async fn send(&self, buf: &[u8], flags: u32) -> Result<usize> {
 		send(self.fd(), buf, flags).await
+	}
+
+	pub async fn write_vectored(&self, bufs: &[IoSlice<'_>]) -> Result<usize> {
+		let header = MessageHeader {
+			iov: bufs.as_ptr() as *mut _,
+			iov_len: bufs.len(),
+
+			..Default::default()
+		};
+
+		sendmsg(self.fd(), &header, 0).await
 	}
 
 	pub async fn recvfrom(&self, buf: &mut [u8], flags: u32) -> Result<(usize, SocketAddr)> {
@@ -145,10 +168,7 @@ impl Socket {
 			iov: MutPtr::from(&mut vec).as_ptr_mut(),
 			iov_len: 1,
 
-			control: ConstPtr::<()>::null().as_ptr(),
-			control_len: 0,
-
-			flags: 0
+			..Default::default()
 		};
 
 		let recvd = recvmsg(self.fd(), &mut header, flags).await?;
@@ -227,74 +247,92 @@ macro_rules! alias_func {
     }
 }
 
+macro_rules! socket_common {
+	{} => {
+		alias_func!(close(self: Self) -> Result<()>);
+
+		alias_func!(recv(self: &Self, buf: &mut [u8], flags: u32) -> Result<usize>);
+
+		alias_func!(read_vectored(self: &Self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize>);
+
+		alias_func!(send(self: &Self, buf: &[u8], flags: u32) -> Result<usize>);
+
+		alias_func!(write_vectored(self: &Self, bufs: &[IoSlice<'_>]) -> Result<usize>);
+
+		alias_func!(recvfrom(self: &Self, buf: &mut [u8], flags: u32) -> Result<(usize, SocketAddr)>);
+
+		alias_func!(sendto(self: &Self, buf: &[u8], flags: u32, addr: &SocketAddr) -> Result<usize>);
+
+		alias_func!(shutdown(self: &Self, how: Shutdown) -> Result<()>);
+
+		alias_func!(set_recvbuf_size(self: &Self, size: i32) -> Result<()>);
+
+		alias_func!(set_sendbuf_size(self: &Self, size: i32) -> Result<()>);
+	}
+}
+
+macro_rules! socket_impl {
+	($struct: ident) => {
+		#[async_trait_fn]
+		impl Read<Context> for $struct {
+			async fn async_read(&mut self, buf: &mut [u8]) -> Result<usize> {
+				self.recv(buf, 0).await
+			}
+
+			fn is_read_vectored(&self) -> bool {
+				true
+			}
+
+			async fn async_read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize> {
+				self.read_vectored(bufs).await
+			}
+		}
+
+		#[async_trait_fn]
+		impl Write<Context> for $struct {
+			async fn async_write(&mut self, buf: &[u8]) -> Result<usize> {
+				self.send(buf, 0).await
+			}
+
+			async fn async_flush(&mut self) -> Result<()> {
+				/* sockets don't need flushing. set nodelay if you want immediate writes */
+				Ok(())
+			}
+
+			fn is_write_vectored(&self) -> bool {
+				true
+			}
+
+			async fn async_write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> Result<usize> {
+				self.write_vectored(bufs).await
+			}
+		}
+
+		#[async_trait_fn]
+		impl Close<Context> for $struct {
+			async fn async_close(self) -> Result<()> {
+				self.close().await
+			}
+		}
+	};
+}
+
 impl StreamSocket {
-	alias_func!(close(self: Self) -> Result<()>);
-
-	alias_func!(recv(self: &Self, buf: &mut [u8], flags: u32) -> Result<usize>);
-
-	alias_func!(send(self: &Self, buf: &[u8], flags: u32) -> Result<usize>);
-
-	alias_func!(recvfrom(self: &Self, buf: &mut [u8], flags: u32) -> Result<(usize, SocketAddr)>);
-
-	alias_func!(sendto(self: &Self, buf: &[u8], flags: u32, addr: &SocketAddr) -> Result<usize>);
-
-	alias_func!(shutdown(self: &Self, how: Shutdown) -> Result<()>);
-
-	alias_func!(set_recvbuf_size(self: &Self, size: i32) -> Result<()>);
-
-	alias_func!(set_sendbuf_size(self: &Self, size: i32) -> Result<()>);
+	socket_common! {}
 
 	alias_func!(set_tcp_nodelay(self: &Self, enable: bool) -> Result<()>);
 
 	alias_func!(set_tcp_keepalive(self: &Self, enable: bool, idle: i32) -> Result<()>);
 }
 
-#[async_trait_fn]
-impl Read<Context> for StreamSocket {
-	async fn async_read(&mut self, buf: &mut [u8]) -> Result<usize> {
-		self.recv(buf, 0).await
-	}
-}
-
-#[async_trait_fn]
-impl Write<Context> for StreamSocket {
-	async fn async_write(&mut self, buf: &[u8]) -> Result<usize> {
-		self.send(buf, 0).await
-	}
-
-	async fn async_flush(&mut self) -> Result<()> {
-		/* sockets don't need flushing. set nodelay if you want immediate writes */
-		Ok(())
-	}
-}
-
-#[async_trait_fn]
-impl Close<Context> for StreamSocket {
-	async fn async_close(self) -> Result<()> {
-		self.close().await
-	}
-}
+socket_impl!(StreamSocket);
 
 pub struct DatagramSocket {
 	socket: Socket
 }
 
 impl DatagramSocket {
-	alias_func!(close(self: Self) -> Result<()>);
-
-	alias_func!(recv(self: &Self, buf: &mut [u8], flags: u32) -> Result<usize>);
-
-	alias_func!(send(self: &Self, buf: &[u8], flags: u32) -> Result<usize>);
-
-	alias_func!(recvfrom(self: &Self, buf: &mut [u8], flags: u32) -> Result<(usize, SocketAddr)>);
-
-	alias_func!(sendto(self: &Self, buf: &[u8], flags: u32, addr: &SocketAddr) -> Result<usize>);
-
-	alias_func!(shutdown(self: &Self, how: Shutdown) -> Result<()>);
-
-	alias_func!(set_recvbuf_size(self: &Self, size: i32) -> Result<()>);
-
-	alias_func!(set_sendbuf_size(self: &Self, size: i32) -> Result<()>);
+	socket_common! {}
 
 	alias_func!(connect_addr(self: &Self, addr: &Address) -> Result<()>);
 
@@ -304,30 +342,7 @@ impl DatagramSocket {
 	}
 }
 
-#[async_trait_fn]
-impl Read<Context> for DatagramSocket {
-	async fn async_read(&mut self, buf: &mut [u8]) -> Result<usize> {
-		self.recv(buf, 0).await
-	}
-}
-
-#[async_trait_fn]
-impl Write<Context> for DatagramSocket {
-	async fn async_write(&mut self, buf: &[u8]) -> Result<usize> {
-		self.send(buf, 0).await
-	}
-
-	async fn async_flush(&mut self) -> Result<()> {
-		Ok(())
-	}
-}
-
-#[async_trait_fn]
-impl Close<Context> for DatagramSocket {
-	async fn async_close(self) -> Result<()> {
-		self.close().await
-	}
-}
+socket_impl!(DatagramSocket);
 
 pub struct TcpListener {
 	socket: Socket

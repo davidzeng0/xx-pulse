@@ -13,8 +13,7 @@ use crate::{
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum TimerFlag {
-	Align = 1 << 0,
-	Idle  = 1 << 1
+	Align = 1 << 0
 }
 
 pub struct Timer {
@@ -62,12 +61,6 @@ impl Timer {
 			}
 		};
 
-		let mut flags = make_bitflags!(TimeoutFlag::{Abs});
-
-		if self.flags.intersects(TimerFlag::Idle) {
-			flags |= TimeoutFlag::Idle;
-		}
-
-		timeout(self.expire, flags).await
+		timeout(self.expire, make_bitflags!(TimeoutFlag::{Abs})).await
 	}
 }

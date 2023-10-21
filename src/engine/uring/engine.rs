@@ -11,7 +11,7 @@ use enumflags2::{make_bitflags, BitFlags};
 use xx_core::{
 	error::{Error, ErrorKind, Result},
 	os::{
-		error::{result_from_int, ErrorCodes},
+		error::ErrorCodes,
 		io_uring::*,
 		mman::*,
 		openat::OpenAt,
@@ -282,10 +282,10 @@ pub struct IoUring<'a> {
 	to_complete: u64,
 	to_submit: u32,
 
-	no_op_req: Request<Result<usize>>
+	no_op_req: Request<isize>
 }
 
-fn no_op(_: RequestPtr<Result<usize>>, _: *const (), _: Result<usize>) {}
+fn no_op(_: RequestPtr<isize>, _: *const (), _: isize) {}
 
 impl<'a> IoUring<'a> {
 	pub fn new() -> Result<Self> {
@@ -439,8 +439,8 @@ impl<'a> IoUring<'a> {
 			self.to_complete -= 1;
 
 			Request::complete(
-				ConstPtr::from(user_data as *const Request<Result<usize>>),
-				result_from_int(result as isize).map(|result| result as usize)
+				ConstPtr::from(user_data as *const Request<isize>),
+				result as isize
 			);
 		}
 	}
@@ -483,8 +483,8 @@ impl EngineImpl for IoUring<'_> {
 
 	#[inline(always)]
 	unsafe fn open(
-		&mut self, path: &CStr, flags: u32, mode: u32, request: RequestPtr<Result<usize>>
-	) -> Option<Result<usize>> {
+		&mut self, path: &CStr, flags: u32, mode: u32, request: RequestPtr<isize>
+	) -> Option<isize> {
 		let mut op = Op::openat(OpenAt::CurrentWorkingDirectory as i32, path, flags, mode, 0);
 
 		op.user_data = request.as_raw_int() as u64;
@@ -495,9 +495,7 @@ impl EngineImpl for IoUring<'_> {
 	}
 
 	#[inline(always)]
-	unsafe fn close(
-		&mut self, fd: OwnedFd, request: RequestPtr<Result<usize>>
-	) -> Option<Result<usize>> {
+	unsafe fn close(&mut self, fd: OwnedFd, request: RequestPtr<isize>) -> Option<isize> {
 		/* into is safe here because push panics if out of memory */
 		let mut op = Op::close(fd.into_raw_fd());
 
@@ -510,9 +508,8 @@ impl EngineImpl for IoUring<'_> {
 
 	#[inline(always)]
 	unsafe fn read(
-		&mut self, fd: BorrowedFd<'_>, buf: &mut [u8], offset: i64,
-		request: RequestPtr<Result<usize>>
-	) -> Option<Result<usize>> {
+		&mut self, fd: BorrowedFd<'_>, buf: &mut [u8], offset: i64, request: RequestPtr<isize>
+	) -> Option<isize> {
 		let mut op = Op::read(
 			fd.as_raw_fd(),
 			buf.as_ptr() as usize,
@@ -530,8 +527,8 @@ impl EngineImpl for IoUring<'_> {
 
 	#[inline(always)]
 	unsafe fn write(
-		&mut self, fd: BorrowedFd<'_>, buf: &[u8], offset: i64, request: RequestPtr<Result<usize>>
-	) -> Option<Result<usize>> {
+		&mut self, fd: BorrowedFd<'_>, buf: &[u8], offset: i64, request: RequestPtr<isize>
+	) -> Option<isize> {
 		let mut op = Op::write(
 			fd.as_raw_fd(),
 			buf.as_ptr() as usize,
@@ -549,8 +546,8 @@ impl EngineImpl for IoUring<'_> {
 
 	#[inline(always)]
 	unsafe fn socket(
-		&mut self, domain: u32, socket_type: u32, protocol: u32, request: RequestPtr<Result<usize>>
-	) -> Option<Result<usize>> {
+		&mut self, domain: u32, socket_type: u32, protocol: u32, request: RequestPtr<isize>
+	) -> Option<isize> {
 		let mut op = Op::socket(domain, socket_type, protocol, 0, 0);
 
 		op.user_data = request.as_raw_int() as u64;
@@ -563,8 +560,8 @@ impl EngineImpl for IoUring<'_> {
 	#[inline(always)]
 	unsafe fn accept(
 		&mut self, socket: BorrowedFd<'_>, addr: MutPtr<()>, addrlen: &mut u32,
-		request: RequestPtr<Result<usize>>
-	) -> Option<Result<usize>> {
+		request: RequestPtr<isize>
+	) -> Option<isize> {
 		let mut op = Op::accept(socket.as_raw_fd(), addr.as_raw_int(), addrlen, 0, 0);
 
 		op.user_data = request.as_raw_int() as u64;
@@ -577,8 +574,8 @@ impl EngineImpl for IoUring<'_> {
 	#[inline(always)]
 	unsafe fn connect(
 		&mut self, socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32,
-		request: RequestPtr<Result<usize>>
-	) -> Option<Result<usize>> {
+		request: RequestPtr<isize>
+	) -> Option<isize> {
 		let mut op = Op::connect(socket.as_raw_fd(), addr.as_raw_int(), addrlen);
 
 		op.user_data = request.as_raw_int() as u64;
@@ -590,9 +587,8 @@ impl EngineImpl for IoUring<'_> {
 
 	#[inline(always)]
 	unsafe fn recv(
-		&mut self, socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32,
-		request: RequestPtr<Result<usize>>
-	) -> Option<Result<usize>> {
+		&mut self, socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32, request: RequestPtr<isize>
+	) -> Option<isize> {
 		let mut op = Op::recv(
 			socket.as_raw_fd(),
 			buf.as_mut_ptr() as usize,
@@ -610,8 +606,8 @@ impl EngineImpl for IoUring<'_> {
 	#[inline(always)]
 	unsafe fn recvmsg(
 		&mut self, socket: BorrowedFd<'_>, header: &mut MessageHeader, flags: u32,
-		request: RequestPtr<Result<usize>>
-	) -> Option<Result<usize>> {
+		request: RequestPtr<isize>
+	) -> Option<isize> {
 		let mut op = Op::recvmsg(socket.as_raw_fd(), header, flags);
 
 		op.user_data = request.as_raw_int() as u64;
@@ -623,9 +619,8 @@ impl EngineImpl for IoUring<'_> {
 
 	#[inline(always)]
 	unsafe fn send(
-		&mut self, socket: BorrowedFd<'_>, buf: &[u8], flags: u32,
-		request: RequestPtr<Result<usize>>
-	) -> Option<Result<usize>> {
+		&mut self, socket: BorrowedFd<'_>, buf: &[u8], flags: u32, request: RequestPtr<isize>
+	) -> Option<isize> {
 		let mut op = Op::send(
 			socket.as_raw_fd(),
 			buf.as_ptr() as usize,
@@ -643,8 +638,8 @@ impl EngineImpl for IoUring<'_> {
 	#[inline(always)]
 	unsafe fn sendmsg(
 		&mut self, socket: BorrowedFd<'_>, header: &MessageHeader, flags: u32,
-		request: RequestPtr<Result<usize>>
-	) -> Option<Result<usize>> {
+		request: RequestPtr<isize>
+	) -> Option<isize> {
 		let mut op = Op::sendmsg(socket.as_raw_fd(), header, flags);
 
 		op.user_data = request.as_raw_int() as u64;
@@ -656,8 +651,8 @@ impl EngineImpl for IoUring<'_> {
 
 	#[inline(always)]
 	unsafe fn shutdown(
-		&mut self, socket: BorrowedFd<'_>, how: Shutdown, request: RequestPtr<Result<usize>>
-	) -> Option<Result<usize>> {
+		&mut self, socket: BorrowedFd<'_>, how: Shutdown, request: RequestPtr<isize>
+	) -> Option<isize> {
 		let mut op = Op::shutdown(socket.as_raw_fd(), how);
 
 		op.user_data = request.as_raw_int() as u64;
@@ -669,23 +664,26 @@ impl EngineImpl for IoUring<'_> {
 
 	#[inline(always)]
 	unsafe fn bind(
-		&mut self, socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32,
-		_: RequestPtr<Result<usize>>
-	) -> Option<Result<usize>> {
-		Some(bind_raw(socket, addr, addrlen).map(|_| 0))
+		&mut self, socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32, _: RequestPtr<isize>
+	) -> Option<isize> {
+		match bind_raw(socket, addr, addrlen) {
+			Ok(()) => Some(0),
+			Err(err) => Some(-err.raw_os_error().unwrap() as isize)
+		}
 	}
 
 	#[inline(always)]
 	unsafe fn listen(
-		&mut self, socket: BorrowedFd<'_>, backlog: i32, _: RequestPtr<Result<usize>>
-	) -> Option<Result<usize>> {
-		Some(listen(socket, backlog).map(|_| 0))
+		&mut self, socket: BorrowedFd<'_>, backlog: i32, _: RequestPtr<isize>
+	) -> Option<isize> {
+		match listen(socket, backlog) {
+			Ok(()) => Some(0),
+			Err(err) => Some(-err.raw_os_error().unwrap() as isize)
+		}
 	}
 
 	#[inline(always)]
-	unsafe fn fsync(
-		&mut self, file: BorrowedFd<'_>, request: RequestPtr<Result<usize>>
-	) -> Option<Result<usize>> {
+	unsafe fn fsync(&mut self, file: BorrowedFd<'_>, request: RequestPtr<isize>) -> Option<isize> {
 		let mut op = Op::fsync(file.as_raw_fd(), 0);
 
 		op.user_data = request.as_raw_int() as u64;
@@ -698,8 +696,8 @@ impl EngineImpl for IoUring<'_> {
 	#[inline(always)]
 	unsafe fn statx(
 		&mut self, path: &CStr, flags: u32, mask: u32, statx: &mut Statx,
-		request: RequestPtr<Result<usize>>
-	) -> Option<Result<usize>> {
+		request: RequestPtr<isize>
+	) -> Option<isize> {
 		let mut op = Op::statx(
 			OpenAt::CurrentWorkingDirectory as i32,
 			path,

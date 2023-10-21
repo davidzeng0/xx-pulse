@@ -9,7 +9,9 @@ use std::{
 use enumflags2::{bitflags, BitFlags};
 use xx_core::{
 	error::{Error, ErrorKind, Result},
+	opt::hint::unlikely,
 	os::{
+		error::ErrorCodes,
 		socket::{MessageHeader, Shutdown},
 		stat::Statx,
 		time::{self, ClockId}
@@ -23,21 +25,19 @@ use super::engine::Engine;
 pub struct Driver {
 	io_engine: Engine,
 	timers: BTreeSet<Timeout>,
-	timer_count: u32 /* excludes idle timers */
+	exiting: bool
 }
 
 #[bitflags]
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum TimeoutFlag {
-	Abs  = 1 << 0,
-	Idle = 1 << 1
+	Abs = 1 << 0
 }
 
 struct Timeout {
 	expire: u64,
-	request: RequestPtr<Result<()>>,
-	idle: bool
+	request: RequestPtr<Result<()>>
 }
 
 impl PartialEq for Timeout {
@@ -71,7 +71,7 @@ impl Driver {
 		Ok(Self {
 			timers: BTreeSet::new(),
 			io_engine: Engine::new()?,
-			timer_count: 0
+			exiting: false
 		})
 	}
 
@@ -81,10 +81,6 @@ impl Driver {
 	}
 
 	fn timer_complete(&mut self, timeout: Timeout, result: Result<()>) {
-		if !timeout.idle {
-			self.timer_count -= 1;
-		}
-
 		Request::complete(timeout.request, result);
 	}
 
@@ -92,10 +88,10 @@ impl Driver {
 	 * see trait xx_core::task::env::Global
 	 */
 	#[inline(never)]
-	fn expire_first_timer(&mut self) {
+	fn expire_first_timer(&mut self, result: Result<()>) {
 		let timeout = self.timers.pop_first().unwrap();
 
-		self.timer_complete(timeout, Ok(()));
+		self.timer_complete(timeout, result);
 	}
 
 	#[inline(never)]
@@ -126,7 +122,7 @@ impl Driver {
 
 			ran = true;
 
-			self.expire_first_timer();
+			self.expire_first_timer(Ok(()));
 		}
 
 		timeout
@@ -135,15 +131,11 @@ impl Driver {
 	#[inline(never)]
 	fn expire_all_timers(&mut self) {
 		while self.timers.first().is_some() {
-			self.expire_first_timer();
+			self.expire_first_timer(Err(Error::new(ErrorKind::Other, "Driver is shutting down")));
 		}
 	}
 
 	fn queue_timer(&mut self, timer: Timeout) {
-		if !timer.idle {
-			self.timer_count += 1;
-		}
-
 		self.timers.insert(timer);
 	}
 
@@ -165,18 +157,18 @@ impl Driver {
 	#[inline(always)]
 	pub fn timeout(&mut self, mut expire: u64, flags: BitFlags<TimeoutFlag>) -> Result<()> {
 		fn cancel(self: &mut Self, expire: u64) -> Result<()> {
-			self.cancel_timer(Timeout { expire, request, idle: false })
+			self.cancel_timer(Timeout { expire, request })
+		}
+
+		if unlikely(self.exiting) {
+			return Progress::Done(Err(Error::new(ErrorKind::Other, "Driver is shutting down")));
 		}
 
 		if !flags.intersects(TimeoutFlag::Abs) {
 			expire = expire.saturating_add(Driver::now());
 		}
 
-		self.queue_timer(Timeout {
-			expire,
-			request,
-			idle: flags.intersects(TimeoutFlag::Idle)
-		});
+		self.queue_timer(Timeout { expire, request });
 
 		Progress::Pending(cancel(self, expire, request))
 	}
@@ -189,17 +181,20 @@ impl Driver {
 	}
 
 	pub fn exit(&mut self) -> Result<()> {
+		self.exiting = true;
 		self.expire_all_timers();
 
 		loop {
 			let timeout = self.run_timers();
 
-			if self.timer_count == 0 && !self.io_engine.has_work() {
+			if !self.io_engine.has_work() {
 				break;
 			}
 
 			self.io_engine.work(timeout)?;
 		}
+
+		self.exiting = false;
 
 		Ok(())
 	}
@@ -208,10 +203,14 @@ impl Driver {
 macro_rules! alias_func {
 	($func: ident ($($arg: ident: $type: ty),*)) => {
 		#[sync_task]
-        pub fn $func(&mut self, $($arg: $type),*) -> Result<usize> {
+        pub fn $func(&mut self, $($arg: $type),*) -> isize {
 			fn cancel(self: &mut Engine) -> Result<()> {
 				/* use this fn to generate the cancel closure type */
 				Ok(())
+			}
+
+			if unlikely(self.exiting) {
+				return Progress::Done(-(ErrorCodes::Nxio as isize));
 			}
 
 			let task = self.io_engine.$func($($arg),*);
