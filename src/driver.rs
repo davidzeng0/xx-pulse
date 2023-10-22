@@ -8,7 +8,7 @@ use std::{
 
 use enumflags2::{bitflags, BitFlags};
 use xx_core::{
-	error::{Error, ErrorKind, Result},
+	error::*,
 	opt::hint::unlikely,
 	os::{
 		error::ErrorCodes,
@@ -16,8 +16,8 @@ use xx_core::{
 		stat::Statx,
 		time::{self, ClockId}
 	},
-	pointer::{ConstPtr, MutPtr},
-	task::{env::Global, sync_task, Progress, Request, RequestPtr, Task}
+	pointer::*,
+	task::*
 };
 
 use super::engine::Engine;
@@ -64,6 +64,10 @@ impl PartialOrd for Timeout {
 	fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
 		Some(self.cmp(other))
 	}
+}
+
+pub fn driver_shutdown_error() -> Error {
+	Error::new(ErrorKind::Other, "Driver is shutting down")
 }
 
 impl Driver {
@@ -131,7 +135,7 @@ impl Driver {
 	#[inline(never)]
 	fn expire_all_timers(&mut self) {
 		while self.timers.first().is_some() {
-			self.expire_first_timer(Err(Error::new(ErrorKind::Other, "Driver is shutting down")));
+			self.expire_first_timer(Err(driver_shutdown_error()));
 		}
 	}
 
@@ -161,7 +165,7 @@ impl Driver {
 		}
 
 		if unlikely(self.exiting) {
-			return Progress::Done(Err(Error::new(ErrorKind::Other, "Driver is shutting down")));
+			return Progress::Done(Err(driver_shutdown_error()));
 		}
 
 		if !flags.intersects(TimeoutFlag::Abs) {
@@ -197,6 +201,10 @@ impl Driver {
 		self.exiting = false;
 
 		Ok(())
+	}
+
+	pub fn exiting(&self) -> bool {
+		self.exiting
 	}
 }
 
@@ -254,6 +262,8 @@ impl Driver {
 	alias_func!(fsync(file: BorrowedFd<'_>));
 
 	alias_func!(statx(path: &CStr, flags: u32, mask: u32, statx: &mut Statx));
+
+	alias_func!(poll(fd: BorrowedFd<'_>, mask: u32));
 }
 
 impl Global for Driver {}

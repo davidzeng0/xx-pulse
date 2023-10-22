@@ -1,12 +1,8 @@
 use xx_core::{
-	coroutines::{runtime::block_on, spawn, task::AsyncTask},
+	coroutines::{runtime::block_on, spawn as spawn_worker, task::AsyncTask},
 	error::Result,
-	pointer::{ConstPtr, MutPtr},
-	task::{
-		closure::CancelClosure,
-		env::{Global, Handle},
-		Cancel, Progress, Request, RequestPtr, Task
-	}
+	pointer::*,
+	task::*
 };
 
 use super::*;
@@ -70,7 +66,7 @@ impl<Output> Spawn<Output> {
 		let executor = internal_get_context().await.executor();
 		let driver = internal_get_driver().await;
 
-		let task = spawn::spawn(executor, |worker| {
+		let task = spawn_worker(executor, |worker| {
 			(Context::new(executor, worker, driver), task)
 		});
 
@@ -151,6 +147,6 @@ impl<Output> Drop for JoinHandle<Output> {
 ///
 /// Returns a join handle which may be used to get the result from the task
 #[async_fn]
-pub async fn spawn<Output, T: AsyncTask<Context, Output>>(task: T) -> JoinHandle<Output> {
+pub async fn spawn<Output, T: AsyncTask<Context, Output> + 'static>(task: T) -> JoinHandle<Output> {
 	Spawn::run(task).await
 }

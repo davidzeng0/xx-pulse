@@ -6,7 +6,7 @@ use xx_core::error::Result;
 use crate::{
 	async_runtime::*,
 	driver::{Driver, TimeoutFlag},
-	ops::timers::*
+	ops::*
 };
 
 #[bitflags]

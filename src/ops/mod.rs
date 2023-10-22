@@ -8,6 +8,12 @@ pub mod select;
 pub mod spawn;
 pub mod timers;
 
+pub use io::*;
+pub use join::*;
+pub use select::*;
+pub use spawn::*;
+pub use timers::*;
+
 #[async_fn]
 async fn internal_get_context() -> Handle<Context> {
 	get_context().await

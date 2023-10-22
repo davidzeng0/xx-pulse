@@ -19,7 +19,7 @@ pub mod xx_async_runtime {
 	fn run_cancel<C: Cancel>(arg: *const (), _: ()) -> Result<()> {
 		let mut cancel: MutPtr<Option<C>> = ConstPtr::from(arg).cast();
 
-		unsafe { cancel.take().unwrap().run() }
+		unsafe { cancel.take().unwrap_unchecked().run() }
 	}
 
 	pub struct Context {
@@ -106,7 +106,7 @@ pub mod xx_async_runtime {
 				self.interrupted = true;
 				self.cancel
 					.take()
-					.expect("Task interrupted while running")
+					.expect("Task interrupted while active")
 					.call(())
 			}
 		}

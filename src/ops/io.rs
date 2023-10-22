@@ -9,17 +9,28 @@ use std::{
 };
 
 use xx_core::{
-	coroutines::runtime::{block_on, check_interrupt},
-	error::{Error, ErrorKind, Result},
+	coroutines::runtime::*,
+	error::*,
+	opt::hint::unlikely,
 	os::{
+		error::ErrorCodes,
 		socket::{MessageHeader, Shutdown},
 		stat::Statx
 	},
-	pointer::{ConstPtr, MutPtr}
+	pointer::*
 };
 
 use super::*;
-use crate::engine::Engine;
+use crate::{driver::driver_shutdown_error, engine::Engine};
+
+#[inline(never)]
+fn check_exiting(driver: Handle<Driver>, err: &Error) -> Result<()> {
+	if driver.exiting() && err.os_error() == Some(ErrorCodes::Nxio) {
+		Err(driver_shutdown_error())
+	} else {
+		Ok(())
+	}
+}
 
 macro_rules! async_engine_task {
 	($func: ident ($($arg: ident: $type: ty),*) -> $return_type: ty) => {
@@ -29,10 +40,13 @@ macro_rules! async_engine_task {
 			check_interrupt().await?;
 
 			let result = block_on(internal_get_driver().await.$func($($arg),*)).await;
+			let result = paste::paste! { Engine::[<result_for_ $func>](result) };
 
-			paste::paste! {
-				Engine::[<result_for_ $func>](result)
+			if unlikely(result.is_err()) {
+				check_exiting(internal_get_driver().await, result.as_ref().unwrap_err())?;
 			}
+
+			result
 		}
 	}
 }
@@ -118,3 +132,5 @@ pub async fn statx(path: &Path, flags: u32, mask: u32, statx: &mut Statx) -> Res
 
 	internal::statx(&path, flags, mask, statx).await
 }
+
+async_engine_task!(poll(fd: BorrowedFd<'_>, mask: u32) -> Result<u32>);

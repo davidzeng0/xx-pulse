@@ -1,10 +1,7 @@
 use std::time::Duration;
 
 use enumflags2::BitFlags;
-use xx_core::{
-	coroutines::runtime::{block_on, check_interrupt},
-	error::Result
-};
+use xx_core::{coroutines::runtime::*, error::Result};
 
 use super::*;
 use crate::driver::TimeoutFlag;

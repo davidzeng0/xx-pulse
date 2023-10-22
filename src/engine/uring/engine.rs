@@ -10,14 +10,7 @@ use std::{
 use enumflags2::{make_bitflags, BitFlags};
 use xx_core::{
 	error::{Error, ErrorKind, Result},
-	os::{
-		error::ErrorCodes,
-		io_uring::*,
-		mman::*,
-		openat::OpenAt,
-		socket::{bind_raw, listen, MessageHeader, Shutdown},
-		stat::Statx
-	},
+	os::{error::ErrorCodes, io_uring::*, mman::*, openat::OpenAt, socket::*, stat::Statx},
 	pointer::{ConstPtr, MutPtr},
 	task::{Request, RequestPtr},
 	trace
@@ -26,22 +19,22 @@ use xx_core::{
 use super::op::*;
 use crate::engine::EngineImpl;
 
-struct DualMapping {
-	submission_ring: MemoryMap,
-	completion_ring: MemoryMap
+struct DualMapping<'a> {
+	submission_ring: MemoryMap<'a>,
+	completion_ring: MemoryMap<'a>
 }
 
-struct SingleMapping {
-	ring: MemoryMap
+struct SingleMapping<'a> {
+	ring: MemoryMap<'a>
 }
 
-enum RingMappings {
-	Dual(DualMapping),
-	Single(SingleMapping)
+enum RingMappings<'a> {
+	Dual(DualMapping<'a>),
+	Single(SingleMapping<'a>)
 }
 
-impl RingMappings {
-	pub fn rings(&self) -> (&MemoryMap, &MemoryMap) {
+impl<'a> RingMappings<'a> {
+	pub fn rings(&self) -> (&MemoryMap<'a>, &MemoryMap<'a>) {
 		match self {
 			RingMappings::Dual(map) => (&map.submission_ring, &map.completion_ring),
 			RingMappings::Single(map) => (&map.ring, &map.ring)
@@ -49,13 +42,15 @@ impl RingMappings {
 	}
 }
 
-struct Rings {
-	rings: RingMappings,
-	submission_entries: MemoryMap
+struct Rings<'a> {
+	rings: RingMappings<'a>,
+	submission_entries: MemoryMap<'a>
 }
 
-impl Rings {
-	fn map_memory(size: usize, offset: MmapOffsets, fd: BorrowedFd<'_>) -> Result<MemoryMap> {
+impl Rings<'_> {
+	fn map_memory<'a>(
+		size: usize, offset: MmapOffsets, fd: BorrowedFd<'_>
+	) -> Result<MemoryMap<'a>> {
 		map_memory(
 			0,
 			size,
@@ -150,27 +145,27 @@ struct CompletionQueue<'a> {
 #[allow(dead_code)]
 
 struct Queue<'a> {
-	pub rings: Rings,
+	pub rings: Rings<'a>,
 	pub submission: SubmissionQueue<'a>,
 	pub completion: CompletionQueue<'a>
 }
 
-fn get_ptr<T>(map: &MemoryMap, off: u32) -> MutPtr<T> {
-	MutPtr::from(map.addr + off as usize)
+fn get_ptr<'a, T>(map: &MemoryMap<'a>, off: u32) -> MutPtr<T> {
+	MutPtr::from(map.addr() + off as usize)
 }
 
-fn get_ref<'a, T>(map: &MemoryMap, off: u32) -> &'a mut T {
-	get_ptr::<T>(map, off).into_mut()
+fn get_ref<'a, T>(map: &MemoryMap<'a>, off: u32) -> &'a mut T {
+	get_ptr::<T>(map, off).as_mut()
 }
 
-fn get_array<'a, T>(map: &MemoryMap, off: u32, len: u32) -> &'a mut [T] {
-	unsafe { slice::from_raw_parts_mut(get_ptr::<T>(map, off).as_ptr_mut(), len as usize) }
+fn get_array<'a, T>(map: &MemoryMap<'a>, off: u32, len: u32) -> &'a mut [T] {
+	unsafe { slice::from_raw_parts_mut(get_ref::<T>(map, off), len as usize) }
 }
 
 #[allow(dead_code)]
 
 impl<'a> SubmissionQueue<'a> {
-	pub fn new(maps: &Rings, params: &Parameters) -> SubmissionQueue<'a> {
+	pub fn new(maps: &Rings<'a>, params: &Parameters) -> SubmissionQueue<'a> {
 		let ring = maps.rings.rings().0;
 		let array = get_array(ring, params.sq_off.array, params.sq_entries);
 
@@ -219,7 +214,7 @@ impl<'a> SubmissionQueue<'a> {
 #[allow(dead_code)]
 
 impl<'a> CompletionQueue<'a> {
-	pub fn new(maps: &Rings, params: &Parameters) -> CompletionQueue<'a> {
+	pub fn new(maps: &Rings<'a>, params: &Parameters) -> CompletionQueue<'a> {
 		let ring = maps.rings.rings().1;
 
 		CompletionQueue {
@@ -254,7 +249,7 @@ impl<'a> CompletionQueue<'a> {
 }
 
 impl<'a> Queue<'a> {
-	pub fn new(rings: Rings, params: Parameters) -> Queue<'a> {
+	pub fn new(rings: Rings<'a>, params: Parameters) -> Queue<'a> {
 		Queue {
 			submission: SubmissionQueue::new(&rings, &params),
 			completion: CompletionQueue::new(&rings, &params),
@@ -275,9 +270,9 @@ impl<'a> Queue<'a> {
 	}
 }
 
-pub struct IoUring<'a> {
+pub struct IoUring {
 	ring_fd: OwnedFd,
-	queue: Queue<'a>,
+	queue: Queue<'static>,
 
 	to_complete: u64,
 	to_submit: u32,
@@ -287,7 +282,7 @@ pub struct IoUring<'a> {
 
 fn no_op(_: RequestPtr<isize>, _: *const (), _: isize) {}
 
-impl<'a> IoUring<'a> {
+impl IoUring {
 	pub fn new() -> Result<Self> {
 		let mut params: Parameters = unsafe { zeroed() };
 
@@ -456,7 +451,7 @@ impl<'a> IoUring<'a> {
 	}
 }
 
-impl EngineImpl for IoUring<'_> {
+impl EngineImpl for IoUring {
 	fn has_work(&self) -> bool {
 		self.to_complete != 0 || self.to_submit != 0
 	}
@@ -705,6 +700,19 @@ impl EngineImpl for IoUring<'_> {
 			mask,
 			statx
 		);
+
+		op.user_data = request.as_raw_int() as u64;
+
+		self.push(&op);
+
+		None
+	}
+
+	#[inline(always)]
+	unsafe fn poll(
+		&mut self, fd: BorrowedFd<'_>, mask: u32, request: RequestPtr<isize>
+	) -> Option<isize> {
+		let mut op = Op::poll(fd.as_raw_fd(), mask);
 
 		op.user_data = request.as_raw_int() as u64;
 

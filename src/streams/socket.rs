@@ -6,21 +6,14 @@ use std::{
 };
 
 use xx_core::{
-	async_std::io::{Close, Read, Write},
-	coroutines::{async_trait_fn, runtime::check_interrupt},
-	error::{Error, ErrorKind, Result},
-	os::{
-		inet::{Address, AddressStorage, IpProtocol},
-		iovec::IoVec,
-		socket::{
-			set_recvbuf_size, set_reuse_addr, set_sendbuf_size, set_tcp_keepalive, set_tcp_nodelay,
-			AddressFamily, MessageHeader, Shutdown, SocketType, MAX_BACKLOG
-		}
-	},
+	async_std::io::*,
+	coroutines::{async_trait_fn, runtime::*},
+	error::*,
+	os::{inet::*, iovec::IoVec, socket::*},
 	pointer::*
 };
 
-use crate::{async_runtime::*, ops::io::*};
+use crate::{async_runtime::*, ops};
 
 #[async_fn]
 async fn foreach_addr<A: ToSocketAddrs, F: Fn(&Address) -> Result<Output>, Output>(
@@ -50,8 +43,8 @@ async fn bind_addr<A: ToSocketAddrs>(addr: A, socket_type: u32, protocol: u32) -
 		set_reuse_addr(socket.fd(), true)?;
 
 		let result = match &addr {
-			Address::V4(addr) => bind(socket.fd(), addr).await,
-			Address::V6(addr) => bind(socket.fd(), addr).await
+			Address::V4(addr) => ops::bind(socket.fd(), addr).await,
+			Address::V6(addr) => ops::bind(socket.fd(), addr).await
 		};
 
 		let err = match result {
@@ -99,7 +92,7 @@ pub struct Socket {
 #[async_fn]
 impl Socket {
 	pub async fn new(domain: u32, socket_type: u32, protocol: u32) -> Result<Socket> {
-		let fd = socket(domain, socket_type, protocol).await?;
+		let fd = ops::socket(domain, socket_type, protocol).await?;
 
 		Ok(Socket { fd })
 	}
@@ -117,18 +110,18 @@ impl Socket {
 	}
 
 	pub async fn close(self) -> Result<()> {
-		close(self.fd).await
+		ops::close(self.fd).await
 	}
 
 	pub async fn connect_addr(&self, addr: &Address) -> Result<()> {
 		match &addr {
-			Address::V4(addr) => connect(self.fd(), addr).await,
-			Address::V6(addr) => connect(self.fd(), addr).await
+			Address::V4(addr) => ops::connect(self.fd(), addr).await,
+			Address::V6(addr) => ops::connect(self.fd(), addr).await
 		}
 	}
 
 	pub async fn recv(&self, buf: &mut [u8], flags: u32) -> Result<usize> {
-		recv(self.fd(), buf, flags).await
+		ops::recv(self.fd(), buf, flags).await
 	}
 
 	pub async fn read_vectored(&self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize> {
@@ -139,11 +132,11 @@ impl Socket {
 			..Default::default()
 		};
 
-		recvmsg(self.fd(), &mut header, 0).await
+		ops::recvmsg(self.fd(), &mut header, 0).await
 	}
 
 	pub async fn send(&self, buf: &[u8], flags: u32) -> Result<usize> {
-		send(self.fd(), buf, flags).await
+		ops::send(self.fd(), buf, flags).await
 	}
 
 	pub async fn write_vectored(&self, bufs: &[IoSlice<'_>]) -> Result<usize> {
@@ -154,7 +147,7 @@ impl Socket {
 			..Default::default()
 		};
 
-		sendmsg(self.fd(), &header, 0).await
+		ops::sendmsg(self.fd(), &header, 0).await
 	}
 
 	pub async fn recvfrom(&self, buf: &mut [u8], flags: u32) -> Result<(usize, SocketAddr)> {
@@ -171,7 +164,7 @@ impl Socket {
 			..Default::default()
 		};
 
-		let recvd = recvmsg(self.fd(), &mut header, flags).await?;
+		let recvd = ops::recvmsg(self.fd(), &mut header, flags).await?;
 
 		Ok((recvd, convert_addr(addr)))
 	}
@@ -200,11 +193,11 @@ impl Socket {
 			flags: 0
 		};
 
-		sendmsg(self.fd(), &header, flags).await
+		ops::sendmsg(self.fd(), &header, flags).await
 	}
 
 	pub async fn shutdown(&self, how: Shutdown) -> Result<()> {
-		shutdown(self.fd(), how).await
+		ops::shutdown(self.fd(), how).await
 	}
 
 	pub async fn set_recvbuf_size(&self, size: i32) -> Result<()> {
@@ -354,7 +347,7 @@ impl TcpListener {
 	#[async_fn]
 	pub async fn accept(&self) -> Result<(StreamSocket, SocketAddr)> {
 		let mut storage = AddressStorage::new();
-		let (fd, _) = accept(self.socket.fd(), &mut storage).await?;
+		let (fd, _) = ops::accept(self.socket.fd(), &mut storage).await?;
 
 		Ok((
 			StreamSocket { socket: Socket { fd } },
@@ -376,7 +369,7 @@ impl Tcp {
 	pub async fn bind<A: ToSocketAddrs>(addr: A) -> Result<TcpListener> {
 		let socket = bind_addr(addr, SocketType::Stream as u32, IpProtocol::Tcp as u32).await?;
 
-		listen(socket.fd(), MAX_BACKLOG).await?;
+		ops::listen(socket.fd(), MAX_BACKLOG).await?;
 
 		Ok(TcpListener { socket })
 	}

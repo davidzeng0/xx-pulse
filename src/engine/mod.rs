@@ -5,13 +5,9 @@ use std::{
 
 use xx_core::{
 	error::Result,
-	os::{
-		error::result_from_int,
-		socket::{MessageHeader, Shutdown},
-		stat::Statx
-	},
-	pointer::{ConstPtr, MutPtr},
-	task::{sync_task, Progress, RequestPtr}
+	os::{error::result_from_int, socket::*, stat::Statx},
+	pointer::*,
+	task::*
 };
 
 use self::uring::IoUring;
@@ -89,6 +85,10 @@ pub trait EngineImpl {
 		&mut self, path: &CStr, flags: u32, mask: u32, statx: &mut Statx,
 		request: RequestPtr<isize>
 	) -> Option<isize>;
+
+	unsafe fn poll(
+		&mut self, fd: BorrowedFd<'_>, mask: u32, request: RequestPtr<isize>
+	) -> Option<isize>;
 }
 
 /// I/O Backend
@@ -96,7 +96,7 @@ pub trait EngineImpl {
 /// Could be one of io_uring, epoll, kqueue, iocp, etc
 pub struct Engine {
 	#[cfg(target_os = "linux")]
-	inner: IoUring<'static>
+	inner: IoUring
 }
 
 trait FromEngineResult {
@@ -112,6 +112,12 @@ impl FromEngineResult for Result<()> {
 impl FromEngineResult for Result<usize> {
 	fn from(val: isize) -> Self {
 		result_from_int(val).map(|result| result as usize)
+	}
+}
+
+impl FromEngineResult for Result<u32> {
+	fn from(val: isize) -> Self {
+		result_from_int(val).map(|result| result as u32)
 	}
 }
 
@@ -193,4 +199,6 @@ impl Engine {
 	engine_task!(fsync(file: BorrowedFd<'_>) -> Result<()>);
 
 	engine_task!(statx(path: &CStr, flags: u32, mask: u32, statx: &mut Statx) -> Result<()>);
+
+	engine_task!(poll(fd: BorrowedFd<'_>, mask: u32) -> Result<u32>);
 }

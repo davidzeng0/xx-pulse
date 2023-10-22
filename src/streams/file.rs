@@ -5,16 +5,16 @@ use std::{
 };
 
 use xx_core::{
-	async_std::io::{Close, Read, Seek, Write},
+	async_std::io::*,
 	coroutines::async_trait_fn,
-	error::{Error, ErrorKind, Result},
+	error::*,
 	os::{
 		fcntl::OpenFlag,
 		stat::{Statx, StatxMask}
 	}
 };
 
-use crate::{async_runtime::*, ops::io::*};
+use crate::{async_runtime::*, ops::*};
 
 pub struct File {
 	fd: OwnedFd,
