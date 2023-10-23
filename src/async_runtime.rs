@@ -30,7 +30,8 @@ pub mod xx_async_runtime {
 		cancel: Option<Closure<*const (), (), Result<()>>>,
 
 		guards: u32,
-		interrupted: bool
+		interrupted: bool,
+		pending_interrupt: bool
 	}
 
 	impl Context {
@@ -43,7 +44,8 @@ pub mod xx_async_runtime {
 				driver,
 				cancel: None,
 				guards: 0,
-				interrupted: false
+				interrupted: false,
+				pending_interrupt: false
 			}
 		}
 
@@ -101,6 +103,10 @@ pub mod xx_async_runtime {
 
 		fn interrupt(&mut self) -> Result<()> {
 			if self.guards > 0 {
+				if !self.pending_interrupt {
+					self.pending_interrupt = true;
+				}
+
 				Err(Error::new(ErrorKind::Other, "Interrupt is prevented"))
 			} else {
 				self.interrupted = true;
@@ -117,12 +123,18 @@ pub mod xx_async_runtime {
 
 		fn clear_interrupt(&mut self) {
 			self.interrupted = false;
+			self.pending_interrupt = false;
 		}
 
 		fn interrupt_guard(&mut self, count: i32) {
-			self.guards
+			self.guards = self
+				.guards
 				.checked_add_signed(count)
 				.expect("Interrupt guards count overflowed");
+			if self.guards == 0 && self.pending_interrupt {
+				self.interrupted = true;
+				self.pending_interrupt = false;
+			}
 		}
 	}
 

@@ -11,7 +11,8 @@ use xx_core::{
 	os::{
 		fcntl::OpenFlag,
 		stat::{Statx, StatxMask}
-	}
+	},
+	read_into
 };
 
 use crate::{async_runtime::*, ops::*};
@@ -40,28 +41,26 @@ impl File {
 		}
 	}
 
-	pub async fn read(&mut self, mut buf: &mut [u8]) -> Result<usize> {
-		let remaining = (self.length - self.offset) as usize;
+	pub async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+		let offset = self.offset;
+		let remaining = (self.length - offset) as usize;
 
-		if remaining == 0 {
-			return Ok(0);
-		}
+		read_into!(buf, remaining);
 
-		let min = buf.len().min(remaining);
+		let read = read(self.fd.as_fd(), buf, offset as i64).await?;
+		let read = check_interrupt_if_zero(read).await?;
 
-		buf = unsafe { buf.get_unchecked_mut(0..min) };
-
-		let read = read(self.fd.as_fd(), buf, self.offset as i64).await?;
-
-		self.offset += read as u64;
+		self.offset = offset + read as u64;
 
 		Ok(read)
 	}
 
 	pub async fn write(&mut self, buf: &[u8]) -> Result<usize> {
-		let wrote = write(self.fd.as_fd(), buf, self.offset as i64).await?;
+		let offset = self.offset;
+		let wrote = write(self.fd.as_fd(), buf, offset as i64).await?;
+		let wrote = check_interrupt_if_zero(wrote).await?;
 
-		self.offset += wrote as u64;
+		self.offset = offset + wrote as u64;
 
 		Ok(wrote)
 	}
@@ -136,3 +135,5 @@ impl Close<Context> for File {
 		self.close().await
 	}
 }
+
+impl Split<Context> for File {}

@@ -99,7 +99,7 @@ impl Driver {
 	}
 
 	#[inline(never)]
-	fn run_timers(&mut self) -> u64 {
+	pub fn run_timers(&mut self) -> u64 {
 		let mut timeout = Duration::from_secs(3600).as_nanos() as u64;
 		let mut now = Self::now();
 		let mut ran = false;
@@ -178,9 +178,7 @@ impl Driver {
 	}
 
 	#[inline(always)]
-	pub fn park(&mut self) -> Result<()> {
-		let timeout = self.run_timers();
-
+	pub fn park(&mut self, timeout: u64) -> Result<()> {
 		self.io_engine.work(timeout)
 	}
 
@@ -211,7 +209,7 @@ impl Driver {
 macro_rules! alias_func {
 	($func: ident ($($arg: ident: $type: ty),*)) => {
 		#[sync_task]
-        pub fn $func(&mut self, $($arg: $type),*) -> isize {
+		pub fn $func(&mut self, $($arg: $type),*) -> isize {
 			fn cancel(self: &mut Engine) -> Result<()> {
 				/* use this fn to generate the cancel closure type */
 				Ok(())
@@ -226,8 +224,8 @@ macro_rules! alias_func {
 			unsafe {
 				task.run(request)
 			}
-        }
-    }
+		}
+	}
 }
 
 impl Driver {

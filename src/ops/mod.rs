@@ -1,4 +1,8 @@
-use xx_core::{coroutines::runtime::get_context, task::env::Handle};
+use xx_core::{
+	coroutines::{check_interrupt, get_context, AsyncContext},
+	error::Result,
+	task::{Cancel, Handle, Task}
+};
 
 use crate::{async_runtime::*, driver::Driver};
 
@@ -22,4 +26,13 @@ async fn internal_get_context() -> Handle<Context> {
 #[async_fn]
 async fn internal_get_driver() -> Handle<Driver> {
 	internal_get_context().await.driver()
+}
+
+#[async_fn]
+#[inline(always)]
+pub async fn try_block_on<T: Task<Result<Output>, C>, C: Cancel, Output>(
+	task: T
+) -> Result<Output> {
+	check_interrupt().await?;
+	get_context().await.block_on(task)
 }

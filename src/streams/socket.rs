@@ -7,7 +7,7 @@ use std::{
 
 use xx_core::{
 	async_std::io::*,
-	coroutines::{async_trait_fn, runtime::*},
+	coroutines::async_trait_fn,
 	error::*,
 	os::{inet::*, iovec::IoVec, socket::*},
 	pointer::*
@@ -28,8 +28,6 @@ async fn foreach_addr<A: ToSocketAddrs, F: Fn(&Address) -> Result<Output>, Outpu
 			Ok(out) => return Ok(out),
 			Err(err) => error = Some(err)
 		}
-
-		check_interrupt().await?;
 	}
 
 	Err(error.unwrap_or(Error::new(ErrorKind::InvalidInput, "No addresses")))
@@ -121,10 +119,13 @@ impl Socket {
 	}
 
 	pub async fn recv(&self, buf: &mut [u8], flags: u32) -> Result<usize> {
-		ops::recv(self.fd(), buf, flags).await
+		let read = ops::recv(self.fd(), buf, flags).await?;
+		let read = check_interrupt_if_zero(read).await?;
+
+		Ok(read)
 	}
 
-	pub async fn read_vectored(&self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize> {
+	pub async fn recv_vectored(&self, bufs: &mut [IoSliceMut<'_>], flags: u32) -> Result<usize> {
 		let mut header = MessageHeader {
 			iov: bufs.as_ptr() as *mut _,
 			iov_len: bufs.len(),
@@ -132,14 +133,31 @@ impl Socket {
 			..Default::default()
 		};
 
-		ops::recvmsg(self.fd(), &mut header, 0).await
+		self.recvmsg(&mut header, flags).await
+	}
+
+	pub async fn recvmsg(&self, header: &mut MessageHeader, flags: u32) -> Result<usize> {
+		let read = ops::recvmsg(self.fd(), header, flags).await?;
+		let read = check_interrupt_if_zero(read).await?;
+
+		Ok(read)
 	}
 
 	pub async fn send(&self, buf: &[u8], flags: u32) -> Result<usize> {
-		ops::send(self.fd(), buf, flags).await
+		let wrote = ops::send(self.fd(), buf, flags).await?;
+		let wrote = check_interrupt_if_zero(wrote).await?;
+
+		Ok(wrote)
 	}
 
-	pub async fn write_vectored(&self, bufs: &[IoSlice<'_>]) -> Result<usize> {
+	pub async fn sendmsg(&self, header: &MessageHeader, flags: u32) -> Result<usize> {
+		let wrote = ops::sendmsg(self.fd(), &header, flags).await?;
+		let wrote = check_interrupt_if_zero(wrote).await?;
+
+		Ok(wrote)
+	}
+
+	pub async fn send_vectored(&self, bufs: &[IoSlice<'_>], flags: u32) -> Result<usize> {
 		let header = MessageHeader {
 			iov: bufs.as_ptr() as *mut _,
 			iov_len: bufs.len(),
@@ -147,7 +165,7 @@ impl Socket {
 			..Default::default()
 		};
 
-		ops::sendmsg(self.fd(), &header, 0).await
+		self.sendmsg(&header, flags).await
 	}
 
 	pub async fn recvfrom(&self, buf: &mut [u8], flags: u32) -> Result<(usize, SocketAddr)> {
@@ -164,7 +182,7 @@ impl Socket {
 			..Default::default()
 		};
 
-		let recvd = ops::recvmsg(self.fd(), &mut header, flags).await?;
+		let recvd = self.recvmsg(&mut header, flags).await?;
 
 		Ok((recvd, convert_addr(addr)))
 	}
@@ -193,7 +211,7 @@ impl Socket {
 			flags: 0
 		};
 
-		ops::sendmsg(self.fd(), &header, flags).await
+		self.sendmsg(&header, flags).await
 	}
 
 	pub async fn shutdown(&self, how: Shutdown) -> Result<()> {
@@ -201,22 +219,18 @@ impl Socket {
 	}
 
 	pub async fn set_recvbuf_size(&self, size: i32) -> Result<()> {
-		check_interrupt().await?;
 		set_recvbuf_size(self.fd(), size)
 	}
 
 	pub async fn set_sendbuf_size(&self, size: i32) -> Result<()> {
-		check_interrupt().await?;
 		set_sendbuf_size(self.fd(), size)
 	}
 
 	pub async fn set_tcp_nodelay(&self, enable: bool) -> Result<()> {
-		check_interrupt().await?;
 		set_tcp_nodelay(self.fd(), enable)
 	}
 
 	pub async fn set_tcp_keepalive(&self, enable: bool, idle: i32) -> Result<()> {
-		check_interrupt().await?;
 		set_tcp_keepalive(self.fd(), enable, idle)
 	}
 }
@@ -246,11 +260,11 @@ macro_rules! socket_common {
 
 		alias_func!(recv(self: &Self, buf: &mut [u8], flags: u32) -> Result<usize>);
 
-		alias_func!(read_vectored(self: &Self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize>);
+		alias_func!(recv_vectored(self: &Self, bufs: &mut [IoSliceMut<'_>], flags: u32) -> Result<usize>);
 
 		alias_func!(send(self: &Self, buf: &[u8], flags: u32) -> Result<usize>);
 
-		alias_func!(write_vectored(self: &Self, bufs: &[IoSlice<'_>]) -> Result<usize>);
+		alias_func!(send_vectored(self: &Self, bufs: &[IoSlice<'_>], flags: u32) -> Result<usize>);
 
 		alias_func!(recvfrom(self: &Self, buf: &mut [u8], flags: u32) -> Result<(usize, SocketAddr)>);
 
@@ -277,7 +291,7 @@ macro_rules! socket_impl {
 			}
 
 			async fn async_read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize> {
-				self.read_vectored(bufs).await
+				self.recv_vectored(bufs, 0).await
 			}
 		}
 
@@ -297,7 +311,7 @@ macro_rules! socket_impl {
 			}
 
 			async fn async_write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> Result<usize> {
-				self.write_vectored(bufs).await
+				self.send_vectored(bufs, 0).await
 			}
 		}
 
@@ -307,6 +321,8 @@ macro_rules! socket_impl {
 				self.close().await
 			}
 		}
+
+		impl Split<Context> for $struct {}
 	};
 }
 

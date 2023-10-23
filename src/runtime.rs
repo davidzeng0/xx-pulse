@@ -2,7 +2,7 @@ use xx_core::{
 	coroutines::*,
 	error::Result,
 	fiber::*,
-	pointer::MutPtr,
+	opt::hint::unlikely,
 	task::{block_on::block_on, env::*}
 };
 
@@ -34,20 +34,28 @@ impl Runtime {
 		});
 
 		let mut running = true;
-		let ptr = MutPtr::from(&mut running);
+		let ptr = &mut running as *mut bool;
 
 		block_on(
 			|_| {
-				let ptr = ptr.clone();
+				let read_running = || -> bool { unsafe { ptr.read_volatile() } };
 
-				while *ptr {
-					handle.driver.park().unwrap();
+				loop {
+					let timeout = handle.driver.run_timers();
+
+					if unlikely(!read_running()) {
+						break;
+					}
+
+					handle.driver.park(timeout).unwrap();
+
+					if unlikely(!read_running()) {
+						break;
+					}
 				}
 			},
 			|| {
-				let mut ptr = ptr.clone();
-
-				*ptr = false;
+				unsafe { *ptr = false };
 			},
 			task
 		)
