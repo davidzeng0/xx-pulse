@@ -79,12 +79,16 @@ impl File {
 		Ok(self.offset)
 	}
 
-	pub async fn stream_position(&mut self) -> Result<u64> {
-		Ok(self.offset)
-	}
-
 	pub async fn close(self) -> Result<()> {
 		close(self.fd).await
+	}
+
+	pub fn pos(&self) -> u64 {
+		self.offset
+	}
+
+	pub fn len(&self) -> u64 {
+		self.length
 	}
 }
 
@@ -117,7 +121,7 @@ impl Seek<Context> for File {
 	}
 
 	async fn async_stream_len(&mut self) -> Result<u64> {
-		Ok(self.length)
+		Ok(self.len())
 	}
 
 	fn stream_position_fast(&self) -> bool {
@@ -125,7 +129,7 @@ impl Seek<Context> for File {
 	}
 
 	async fn async_stream_position(&mut self) -> Result<u64> {
-		self.stream_position().await
+		Ok(self.offset)
 	}
 }
 
