@@ -1,10 +1,9 @@
 use xx_core::{
-	coroutines::{check_interrupt, get_context, AsyncContext},
 	error::Result,
 	task::{Cancel, Handle, Task}
 };
 
-use crate::{async_runtime::*, driver::Driver};
+use crate::{driver::Driver, *};
 
 pub mod io;
 pub mod join;

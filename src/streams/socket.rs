@@ -7,13 +7,12 @@ use std::{
 
 use xx_core::{
 	async_std::io::*,
-	coroutines::async_trait_fn,
 	error::*,
 	os::{inet::*, iovec::IoVec, socket::*},
 	pointer::*
 };
 
-use crate::{async_runtime::*, ops};
+use crate::{async_runtime::*, async_trait_fn, ops};
 
 #[async_fn]
 async fn foreach_addr<A: ToSocketAddrs, F: Fn(&Address) -> Result<Output>, Output>(
