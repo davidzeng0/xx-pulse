@@ -10,6 +10,7 @@ use std::{
 use enumflags2::{make_bitflags, BitFlags};
 use xx_core::{
 	error::{Error, ErrorKind, Result},
+	opt::hint::unlikely,
 	os::{error::ErrorCodes, io_uring::*, mman::*, openat::OpenAt, socket::*, stat::Statx},
 	pointer::{ConstPtr, MutPtr},
 	task::{Request, RequestPtr},
@@ -351,7 +352,7 @@ impl IoUring {
 		Ok(())
 	}
 
-	#[inline(always)]
+	#[inline(never)]
 	fn flush(&mut self) -> Result<()> {
 		let mut flags = BitFlags::<EnterFlag>::default();
 
@@ -445,7 +446,7 @@ impl IoUring {
 		*self.queue.submission.next() = *request;
 		self.to_submit += 1;
 
-		if self.to_submit >= self.queue.submission.capacity {
+		if unlikely(self.to_submit >= self.queue.submission.capacity) {
 			self.flush().expect("Failed to flush submission ring");
 		}
 	}

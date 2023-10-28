@@ -9,9 +9,8 @@ use std::{
 use enumflags2::{bitflags, BitFlags};
 use xx_core::{
 	error::*,
-	opt::hint::unlikely,
+	opt::hint::{likely, unlikely},
 	os::{
-		error::ErrorCodes,
 		socket::{MessageHeader, Shutdown},
 		stat::Statx,
 		time::{self, ClockId}
@@ -66,7 +65,7 @@ impl PartialOrd for Timeout {
 	}
 }
 
-pub fn driver_shutdown_error() -> Error {
+fn driver_shutdown_error() -> Error {
 	Error::new(ErrorKind::Other, "Driver is shutting down")
 }
 
@@ -201,8 +200,12 @@ impl Driver {
 		Ok(())
 	}
 
-	pub fn exiting(&self) -> bool {
-		self.exiting
+	pub fn check_exiting(&self) -> Result<()> {
+		if likely(!self.exiting) {
+			Ok(())
+		} else {
+			Err(driver_shutdown_error())
+		}
 	}
 }
 
@@ -213,10 +216,6 @@ macro_rules! alias_func {
 			fn cancel(self: &mut Engine) -> Result<()> {
 				/* use this fn to generate the cancel closure type */
 				Ok(())
-			}
-
-			if unlikely(self.exiting) {
-				return Progress::Done(-(ErrorCodes::Nxio as isize));
 			}
 
 			let task = self.io_engine.$func($($arg),*);

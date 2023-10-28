@@ -14,7 +14,7 @@ use xx_core::{
 	read_into
 };
 
-use crate::*;
+use super::*;
 
 pub struct File {
 	fd: OwnedFd,
@@ -29,14 +29,14 @@ impl File {
 
 		statx(path.as_ref(), 0, 0, &mut stat).await?;
 
-		if stat.mask & (StatxMask::Size as u32) == 0 {
-			Err(Error::new(ErrorKind::Other, "Failed to query file size"))
-		} else {
+		if stat.mask & (StatxMask::Size as u32) != 0 {
 			Ok(File {
 				fd: open(path.as_ref(), OpenFlag::ReadOnly, 0).await?,
 				offset: 0,
 				length: stat.size
 			})
+		} else {
+			Err(Error::new(ErrorKind::Other, "Failed to query file size"))
 		}
 	}
 
@@ -91,27 +91,27 @@ impl File {
 	}
 }
 
-#[async_trait_fn]
-impl Read<Context> for File {
-	async fn async_read(&mut self, buf: &mut [u8]) -> Result<usize> {
+#[async_trait_impl]
+impl Read for File {
+	async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
 		self.read(buf).await
 	}
 }
 
-#[async_trait_fn]
-impl Write<Context> for File {
-	async fn async_write(&mut self, buf: &[u8]) -> Result<usize> {
+#[async_trait_impl]
+impl Write for File {
+	async fn write(&mut self, buf: &[u8]) -> Result<usize> {
 		self.write(buf).await
 	}
 
-	async fn async_flush(&mut self) -> Result<()> {
+	async fn flush(&mut self) -> Result<()> {
 		self.flush().await
 	}
 }
 
-#[async_trait_fn]
-impl Seek<Context> for File {
-	async fn async_seek(&mut self, seek: SeekFrom) -> Result<u64> {
+#[async_trait_impl]
+impl Seek for File {
+	async fn seek(&mut self, seek: SeekFrom) -> Result<u64> {
 		self.seek(seek).await
 	}
 
@@ -119,7 +119,7 @@ impl Seek<Context> for File {
 		true
 	}
 
-	async fn async_stream_len(&mut self) -> Result<u64> {
+	async fn stream_len(&mut self) -> Result<u64> {
 		Ok(self.len())
 	}
 
@@ -127,16 +127,9 @@ impl Seek<Context> for File {
 		true
 	}
 
-	async fn async_stream_position(&mut self) -> Result<u64> {
+	async fn stream_position(&mut self) -> Result<u64> {
 		Ok(self.offset)
 	}
 }
 
-#[async_trait_fn]
-impl Close<Context> for File {
-	async fn async_close(self) -> Result<()> {
-		self.close().await
-	}
-}
-
-impl Split<Context> for File {}
+impl Split for File {}

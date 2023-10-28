@@ -1,37 +1,28 @@
-use xx_core::{
-	error::Result,
-	task::{Cancel, Handle, Task}
-};
-
 use crate::{driver::Driver, *};
 
-pub mod io;
-pub mod join;
-pub mod select;
-pub mod spawn;
-pub mod timers;
+mod io;
+mod join;
+mod select;
+mod spawn;
+mod timers;
 
 pub use io::*;
 pub use join::*;
 pub use select::*;
 pub use spawn::*;
 pub use timers::*;
+use xx_core::coroutines::block_on;
+pub use xx_core::coroutines::{Join, JoinHandle, Select};
 
 #[async_fn]
-async fn internal_get_context() -> Handle<Context> {
-	get_context().await
+async fn internal_get_runtime_context() -> Handle<RuntimeContext> {
+	get_context()
+		.await
+		.get_runtime::<RuntimeContext>()
+		.unwrap_or_else(|| panic!("Cannot use xx-pulse functions with a different runtime"))
 }
 
 #[async_fn]
 async fn internal_get_driver() -> Handle<Driver> {
-	internal_get_context().await.driver()
-}
-
-#[async_fn]
-#[inline(always)]
-pub async fn try_block_on<T: Task<Result<Output>, C>, C: Cancel, Output>(
-	task: T
-) -> Result<Output> {
-	check_interrupt().await?;
-	get_context().await.block_on(task)
+	internal_get_runtime_context().await.driver()
 }

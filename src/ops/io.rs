@@ -9,11 +9,8 @@ use std::{
 };
 
 use xx_core::{
-	coroutines::runtime::*,
 	error::*,
-	opt::hint::unlikely,
 	os::{
-		error::ErrorCodes,
 		socket::{MessageHeader, Shutdown},
 		stat::Statx
 	},
@@ -21,39 +18,25 @@ use xx_core::{
 };
 
 use super::*;
-use crate::{driver::driver_shutdown_error, engine::Engine};
-
-#[inline(never)]
-fn check_exiting(driver: Handle<Driver>, err: &Error) -> Result<()> {
-	if driver.exiting() && err.os_error() == Some(ErrorCodes::Nxio) {
-		Err(driver_shutdown_error())
-	} else {
-		Ok(())
-	}
-}
+use crate::engine::Engine;
 
 macro_rules! async_engine_task {
-	($check_interrupt: stmt, $func: ident ($($arg: ident: $type: ty),*) -> $return_type: ty) => {
+	($force: literal, $func: ident ($($arg: ident: $type: ty),*) -> $return_type: ty) => {
 		#[async_fn]
 		#[inline(always)]
 		pub async fn $func($($arg: $type),*) -> $return_type {
-			$check_interrupt;
+			let mut driver = internal_get_driver().await;
 
-			let result = block_on(internal_get_driver().await.$func($($arg),*)).await;
-			let result = paste::paste! { Engine::[<result_for_ $func>](result) };
+			if !$force {
+				check_interrupt().await?;
 
-			if unlikely(result.is_err()) {
-				check_exiting(internal_get_driver().await, result.as_ref().unwrap_err())?;
+				driver.check_exiting()?;
 			}
 
-			result
-		}
-	}
-}
+			let result = block_on(driver.$func($($arg),*)).await;
 
-macro_rules! async_engine_task_interruptible {
-	($($arg: tt)+) => {
-		async_engine_task!(check_interrupt().await?, $($arg)+);
+			paste::paste! { Engine::[<result_for_ $func>](result) }
+		}
 	}
 }
 
@@ -65,32 +48,30 @@ fn path_to_cstr(path: &Path) -> Result<CString> {
 mod internal {
 	use super::*;
 
-	async_engine_task_interruptible!(open(path: &CStr, flags: u32, mode: u32) -> Result<OwnedFd>);
+	async_engine_task!(false, open(path: &CStr, flags: u32, mode: u32) -> Result<OwnedFd>);
 
-	async_engine_task_interruptible!(accept(
+	async_engine_task!(false, accept(
 		socket: BorrowedFd<'_>, addr: MutPtr<()>, addrlen: &mut u32
 	) -> Result<OwnedFd>);
 
-	async_engine_task_interruptible!(connect(socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32) -> Result<()>);
+	async_engine_task!(false, connect(socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32) -> Result<()>);
 
-	async_engine_task_interruptible!(bind(socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32) -> Result<()>);
+	async_engine_task!(false, bind(socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32) -> Result<()>);
 
-	async_engine_task_interruptible!(statx(path: &CStr, flags: u32, mask: u32, statx: &mut Statx) -> Result<()>);
+	async_engine_task!(false, statx(path: &CStr, flags: u32, mask: u32, statx: &mut Statx) -> Result<()>);
 }
 
 #[async_fn]
 pub async fn open(path: &Path, flags: u32, mode: u32) -> Result<OwnedFd> {
-	check_interrupt().await?;
-
 	let path = path_to_cstr(path)?;
 
 	internal::open(&path, flags, mode).await
 }
 
-async_engine_task!((), close(fd: OwnedFd) -> Result<()>);
-async_engine_task_interruptible!(read(fd: BorrowedFd<'_>, buf: &mut [u8], offset: i64) -> Result<usize>);
-async_engine_task_interruptible!(write(fd: BorrowedFd<'_>, buf: &[u8], offset: i64) -> Result<usize>);
-async_engine_task_interruptible!(socket(domain: u32, socket_type: u32, protocol: u32) -> Result<OwnedFd>);
+async_engine_task!(true, close(fd: OwnedFd) -> Result<()>);
+async_engine_task!(false, read(fd: BorrowedFd<'_>, buf: &mut [u8], offset: i64) -> Result<usize>);
+async_engine_task!(false, write(fd: BorrowedFd<'_>, buf: &[u8], offset: i64) -> Result<usize>);
+async_engine_task!(false, socket(domain: u32, socket_type: u32, protocol: u32) -> Result<OwnedFd>);
 
 use internal::accept as accept_raw;
 
@@ -109,15 +90,15 @@ pub async fn connect<A>(socket: BorrowedFd<'_>, addr: &A) -> Result<()> {
 	connect_raw(socket, ConstPtr::from(addr).cast(), size_of::<A>() as u32).await
 }
 
-async_engine_task_interruptible!(recv(socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32) -> Result<usize>);
-async_engine_task_interruptible!(recvmsg(
+async_engine_task!(false, recv(socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32) -> Result<usize>);
+async_engine_task!(false, recvmsg(
 	socket: BorrowedFd<'_>, header: &mut MessageHeader, flags: u32
 ) -> Result<usize>);
-async_engine_task_interruptible!(send(socket: BorrowedFd<'_>, buf: &[u8], flags: u32) -> Result<usize>);
+async_engine_task!(false, send(socket: BorrowedFd<'_>, buf: &[u8], flags: u32) -> Result<usize>);
 
-async_engine_task_interruptible!(sendmsg(socket: BorrowedFd<'_>, header: &MessageHeader, flags: u32) -> Result<usize>);
+async_engine_task!(false, sendmsg(socket: BorrowedFd<'_>, header: &MessageHeader, flags: u32) -> Result<usize>);
 
-async_engine_task_interruptible!(shutdown(socket: BorrowedFd<'_>, how: Shutdown) -> Result<()>);
+async_engine_task!(false, shutdown(socket: BorrowedFd<'_>, how: Shutdown) -> Result<()>);
 
 use internal::bind as bind_raw;
 
@@ -126,17 +107,15 @@ pub async fn bind<A>(socket: BorrowedFd<'_>, addr: &A) -> Result<()> {
 	bind_raw(socket, ConstPtr::from(addr).cast(), size_of::<A>() as u32).await
 }
 
-async_engine_task_interruptible!(listen(socket: BorrowedFd<'_>, backlog: i32) -> Result<()>);
+async_engine_task!(false, listen(socket: BorrowedFd<'_>, backlog: i32) -> Result<()>);
 
-async_engine_task_interruptible!(fsync(file: BorrowedFd<'_>) -> Result<()>);
+async_engine_task!(false, fsync(file: BorrowedFd<'_>) -> Result<()>);
 
 #[async_fn]
 pub async fn statx(path: &Path, flags: u32, mask: u32, statx: &mut Statx) -> Result<()> {
-	check_interrupt().await?;
-
 	let path = path_to_cstr(path)?;
 
 	internal::statx(&path, flags, mask, statx).await
 }
 
-async_engine_task_interruptible!(poll(fd: BorrowedFd<'_>, mask: u32) -> Result<u32>);
+async_engine_task!(false, poll(fd: BorrowedFd<'_>, mask: u32) -> Result<u32>);

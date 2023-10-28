@@ -9,7 +9,8 @@ use crate::driver::TimeoutFlag;
 #[async_fn]
 #[inline(always)]
 pub async fn timeout(expire: u64, flags: BitFlags<TimeoutFlag>) -> Result<()> {
-	try_block_on(internal_get_driver().await.timeout(expire, flags)).await
+	check_interrupt().await?;
+	block_on(internal_get_driver().await.timeout(expire, flags)).await
 }
 
 #[async_fn]

@@ -1,12 +1,11 @@
 use std::time::Duration;
 
-use enumflags2::{bitflags, make_bitflags, BitFlags};
-use xx_core::error::Result;
+use enumflags2::*;
+use xx_core::error::*;
 
 use crate::{
-	async_runtime::*,
 	driver::{Driver, TimeoutFlag},
-	ops::*
+	*
 };
 
 #[bitflags]

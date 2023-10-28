@@ -9,10 +9,11 @@ use xx_core::{
 	async_std::io::*,
 	error::*,
 	os::{inet::*, iovec::IoVec, socket::*},
-	pointer::*
+	pointer::*,
+	read_wrapper, wrapper_functions, write_wrapper
 };
 
-use crate::{async_runtime::*, async_trait_fn, ops};
+use super::{async_fn, async_trait_impl, ops};
 
 #[async_fn]
 async fn foreach_addr<A: ToSocketAddrs, F: Fn(&Address) -> Result<Output>, Output>(
@@ -234,6 +235,43 @@ impl Socket {
 	}
 }
 
+#[async_trait_impl]
+impl Read for Socket {
+	async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+		self.recv(buf, 0).await
+	}
+
+	fn is_read_vectored(&self) -> bool {
+		true
+	}
+
+	async fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize> {
+		self.recv_vectored(bufs, 0).await
+	}
+}
+
+#[async_trait_impl]
+impl Write for Socket {
+	async fn write(&mut self, buf: &[u8]) -> Result<usize> {
+		self.send(buf, 0).await
+	}
+
+	async fn flush(&mut self) -> Result<()> {
+		/* sockets don't need flushing. set nodelay if you want immediate writes */
+		Ok(())
+	}
+
+	fn is_write_vectored(&self) -> bool {
+		true
+	}
+
+	async fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> Result<usize> {
+		self.send_vectored(bufs, 0).await
+	}
+}
+
+impl Split for Socket {}
+
 impl From<OwnedFd> for Socket {
 	fn from(fd: OwnedFd) -> Self {
 		Self { fd }
@@ -244,93 +282,76 @@ pub struct StreamSocket {
 	socket: Socket
 }
 
-macro_rules! alias_func {
-	($func: ident ($self: ident: $self_type: ty $(, $arg: ident: $type: ty)*) -> $return_type: ty) => {
-		#[async_fn]
-        pub async fn $func($self: $self_type $(, $arg: $type)*) -> $return_type {
-			$self.socket.$func($($arg),*).await
-        }
-    }
-}
-
 macro_rules! socket_common {
-	{} => {
-		alias_func!(close(self: Self) -> Result<()>);
+	() => {
+		wrapper_functions!{
+			inner = self.socket;
 
-		alias_func!(recv(self: &Self, buf: &mut [u8], flags: u32) -> Result<usize>);
+			#[async_fn]
+			pub async fn close(self: Self) -> Result<()>;
 
-		alias_func!(recv_vectored(self: &Self, bufs: &mut [IoSliceMut<'_>], flags: u32) -> Result<usize>);
+			#[async_fn]
+			pub async fn recv(self: &Self, buf: &mut [u8], flags: u32) -> Result<usize>;
 
-		alias_func!(send(self: &Self, buf: &[u8], flags: u32) -> Result<usize>);
+			#[async_fn]
+			pub async fn recv_vectored(self: &Self, bufs: &mut [IoSliceMut<'_>], flags: u32) -> Result<usize>;
 
-		alias_func!(send_vectored(self: &Self, bufs: &[IoSlice<'_>], flags: u32) -> Result<usize>);
+			#[async_fn]
+			pub async fn send(self: &Self, buf: &[u8], flags: u32) -> Result<usize>;
 
-		alias_func!(recvfrom(self: &Self, buf: &mut [u8], flags: u32) -> Result<(usize, SocketAddr)>);
+			#[async_fn]
+			pub async fn send_vectored(self: &Self, bufs: &[IoSlice<'_>], flags: u32) -> Result<usize>;
 
-		alias_func!(sendto(self: &Self, buf: &[u8], flags: u32, addr: &SocketAddr) -> Result<usize>);
+			#[async_fn]
+			pub async fn recvfrom(self: &Self, buf: &mut [u8], flags: u32) -> Result<(usize, SocketAddr)>;
 
-		alias_func!(shutdown(self: &Self, how: Shutdown) -> Result<()>);
+			#[async_fn]
+			pub async fn sendto(self: &Self, buf: &[u8], flags: u32, addr: &SocketAddr) -> Result<usize>;
 
-		alias_func!(set_recvbuf_size(self: &Self, size: i32) -> Result<()>);
+			#[async_fn]
+			pub async fn shutdown(self: &Self, how: Shutdown) -> Result<()>;
 
-		alias_func!(set_sendbuf_size(self: &Self, size: i32) -> Result<()>);
-	}
+			#[async_fn]
+			pub async fn set_recvbuf_size(self: &Self, size: i32) -> Result<()>;
+
+			#[async_fn]
+			pub async fn set_sendbuf_size(self: &Self, size: i32) -> Result<()>;
+		}
+	};
 }
 
 macro_rules! socket_impl {
-	($struct: ident) => {
-		#[async_trait_fn]
-		impl Read<Context> for $struct {
-			async fn async_read(&mut self, buf: &mut [u8]) -> Result<usize> {
-				self.recv(buf, 0).await
-			}
-
-			fn is_read_vectored(&self) -> bool {
-				true
-			}
-
-			async fn async_read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize> {
-				self.recv_vectored(bufs, 0).await
+	($type: ty) => {
+		impl Read for $type {
+			read_wrapper! {
+				inner = socket;
+				mut inner = socket;
 			}
 		}
 
-		#[async_trait_fn]
-		impl Write<Context> for $struct {
-			async fn async_write(&mut self, buf: &[u8]) -> Result<usize> {
-				self.send(buf, 0).await
-			}
-
-			async fn async_flush(&mut self) -> Result<()> {
-				/* sockets don't need flushing. set nodelay if you want immediate writes */
-				Ok(())
-			}
-
-			fn is_write_vectored(&self) -> bool {
-				true
-			}
-
-			async fn async_write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> Result<usize> {
-				self.send_vectored(bufs, 0).await
+		impl Write for $type {
+			write_wrapper! {
+				inner = socket;
+				mut inner = socket;
 			}
 		}
 
-		#[async_trait_fn]
-		impl Close<Context> for $struct {
-			async fn async_close(self) -> Result<()> {
-				self.close().await
-			}
-		}
-
-		impl Split<Context> for $struct {}
+		impl Split for $type {}
 	};
 }
 
 impl StreamSocket {
-	socket_common! {}
+	socket_common!();
 
-	alias_func!(set_tcp_nodelay(self: &Self, enable: bool) -> Result<()>);
+	wrapper_functions! {
+		inner = self.socket;
 
-	alias_func!(set_tcp_keepalive(self: &Self, enable: bool, idle: i32) -> Result<()>);
+		#[async_fn]
+		pub async fn set_tcp_nodelay(self: &Self, enable: bool) -> Result<()>;
+
+		#[async_fn]
+		pub async fn set_tcp_keepalive(self: &Self, enable: bool, idle: i32) -> Result<()>;
+	}
 }
 
 socket_impl!(StreamSocket);
@@ -340,9 +361,14 @@ pub struct DatagramSocket {
 }
 
 impl DatagramSocket {
-	socket_common! {}
+	socket_common!();
 
-	alias_func!(connect_addr(self: &Self, addr: &Address) -> Result<()>);
+	wrapper_functions! {
+		inner = self.socket;
+
+		#[async_fn]
+		async fn connect_addr(self: &Self, addr: &Address) -> Result<()>;
+	}
 
 	#[async_fn]
 	pub async fn connect<A: ToSocketAddrs>(&self, addrs: A) -> Result<()> {
@@ -357,7 +383,12 @@ pub struct TcpListener {
 }
 
 impl TcpListener {
-	alias_func!(close(self: Self) -> Result<()>);
+	wrapper_functions! {
+		inner = self.socket;
+
+		#[async_fn]
+		async fn close(self: Self) -> Result<()>;
+	}
 
 	#[async_fn]
 	pub async fn accept(&self) -> Result<(StreamSocket, SocketAddr)> {
