@@ -11,7 +11,7 @@ use xx_core::{
 		fcntl::OpenFlag,
 		stat::{Statx, StatxMask}
 	},
-	read_into
+	read_into, write_from
 };
 
 use super::*;
@@ -49,12 +49,16 @@ impl File {
 		let read = read(self.fd.as_fd(), buf, offset as i64).await?;
 		let read = check_interrupt_if_zero(read).await?;
 
+		/* store offset to prevent race condition if split and read+write called
+		 * simultaneously */
 		self.offset = offset + read as u64;
 
 		Ok(read)
 	}
 
 	pub async fn write(&mut self, buf: &[u8]) -> Result<usize> {
+		write_from!(buf);
+
 		let offset = self.offset;
 		let wrote = write(self.fd.as_fd(), buf, offset as i64).await?;
 		let wrote = check_interrupt_if_zero(wrote).await?;
@@ -71,8 +75,8 @@ impl File {
 	pub async fn seek(&mut self, seek: SeekFrom) -> Result<u64> {
 		match seek {
 			SeekFrom::Start(pos) => self.offset = pos,
-			SeekFrom::Current(rel) => self.offset = self.offset.wrapping_add_signed(rel),
-			SeekFrom::End(rel) => self.offset = self.length.wrapping_add_signed(rel)
+			SeekFrom::Current(rel) => self.offset = self.offset.checked_add_signed(rel).unwrap(),
+			SeekFrom::End(rel) => self.offset = self.length.checked_add_signed(rel).unwrap()
 		}
 
 		Ok(self.offset)

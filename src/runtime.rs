@@ -15,7 +15,7 @@ pub(super) struct RuntimeContext {
 impl RuntimeContext {
 	fn new(executor: Handle<Executor>, driver: Handle<Driver>, worker: Handle<Worker>) -> Self {
 		Self {
-			driver: driver,
+			driver,
 			context: Context::new::<Self>(executor, worker)
 		}
 	}

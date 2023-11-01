@@ -10,7 +10,7 @@ use xx_core::{
 	error::*,
 	os::{inet::*, iovec::IoVec, socket::*},
 	pointer::*,
-	read_wrapper, wrapper_functions, write_wrapper
+	read_into, read_wrapper, wrapper_functions, write_from, write_wrapper
 };
 
 use super::{async_fn, async_trait_impl, ops};
@@ -119,6 +119,8 @@ impl Socket {
 	}
 
 	pub async fn recv(&self, buf: &mut [u8], flags: u32) -> Result<usize> {
+		read_into!(buf);
+
 		let read = ops::recv(self.fd(), buf, flags).await?;
 		let read = check_interrupt_if_zero(read).await?;
 
@@ -144,6 +146,8 @@ impl Socket {
 	}
 
 	pub async fn send(&self, buf: &[u8], flags: u32) -> Result<usize> {
+		write_from!(buf);
+
 		let wrote = ops::send(self.fd(), buf, flags).await?;
 		let wrote = check_interrupt_if_zero(wrote).await?;
 
@@ -188,6 +192,8 @@ impl Socket {
 	}
 
 	pub async fn sendto(&self, buf: &[u8], flags: u32, addr: &SocketAddr) -> Result<usize> {
+		write_from!(buf);
+
 		let mut vec = IoVec { base: buf.as_ptr() as *const _, len: buf.len() };
 		let addr = addr.clone().into();
 

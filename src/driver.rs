@@ -131,13 +131,6 @@ impl Driver {
 		timeout
 	}
 
-	#[inline(never)]
-	fn expire_all_timers(&mut self) {
-		while self.timers.first().is_some() {
-			self.expire_first_timer(Err(driver_shutdown_error()));
-		}
-	}
-
 	fn queue_timer(&mut self, timer: Timeout) {
 		self.timers.insert(timer);
 	}
@@ -179,6 +172,13 @@ impl Driver {
 	#[inline(always)]
 	pub fn park(&mut self, timeout: u64) -> Result<()> {
 		self.io_engine.work(timeout)
+	}
+
+	#[inline(never)]
+	fn expire_all_timers(&mut self) {
+		while self.timers.first().is_some() {
+			self.expire_first_timer(Err(driver_shutdown_error()));
+		}
 	}
 
 	pub fn exit(&mut self) -> Result<()> {

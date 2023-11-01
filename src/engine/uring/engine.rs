@@ -10,7 +10,7 @@ use std::{
 use enumflags2::{make_bitflags, BitFlags};
 use xx_core::{
 	error::{Error, ErrorKind, Result},
-	opt::hint::unlikely,
+	opt::hint::*,
 	os::{error::ErrorCodes, io_uring::*, mman::*, openat::OpenAt, socket::*, stat::Statx},
 	pointer::{ConstPtr, MutPtr},
 	task::{Request, RequestPtr},
@@ -378,7 +378,7 @@ impl IoUring {
 		let flags = make_bitflags!(EnterFlag::{GetEvents});
 		let mut wait = 0;
 
-		if timeout != 0 {
+		if likely(timeout != 0) {
 			wait = 1;
 		} else if self.to_submit == 0 {
 			let ring = self.queue.completion.read_ring();
@@ -460,6 +460,7 @@ impl EngineImpl for IoUring {
 	#[inline(always)]
 	fn work(&mut self, timeout: u64) -> Result<()> {
 		let events = self.submit_and_wait(timeout).expect("Failed to get events");
+
 		self.run_events(events);
 
 		Ok(())
