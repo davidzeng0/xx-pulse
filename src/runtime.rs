@@ -1,5 +1,5 @@
 use xx_core::{
-	container_of, coroutines::*, error::Result, fiber::*, opt::hint::unlikely,
+	container_of, coroutines::*, error::Result, fiber::*, opt::hint::unlikely, pointer::MutPtr,
 	task::block_on as sync_block_on
 };
 
@@ -64,29 +64,24 @@ impl Runtime {
 			task
 		);
 
-		let mut running = true;
-		let ptr = &mut running as *mut bool;
+		let running = MutPtr::from(&mut true);
 
 		sync_block_on(
-			|_| {
-				let read_running = || -> bool { unsafe { ptr.read_volatile() } };
+			|_| loop {
+				let timeout = handle.driver.run_timers();
 
-				loop {
-					let timeout = handle.driver.run_timers();
+				if unlikely(!*running) {
+					break;
+				}
 
-					if unlikely(!read_running()) {
-						break;
-					}
+				handle.driver.park(timeout).unwrap();
 
-					handle.driver.park(timeout).unwrap();
-
-					if unlikely(!read_running()) {
-						break;
-					}
+				if unlikely(!*running) {
+					break;
 				}
 			},
 			|| {
-				unsafe { *ptr = false };
+				*(running.clone()) = false;
 			},
 			task
 		)

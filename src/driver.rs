@@ -114,11 +114,7 @@ impl Driver {
 					now = Self::now();
 				}
 
-				timeout = if timer.expire > now {
-					timer.expire - now
-				} else {
-					0
-				};
+				timeout = timer.expire.saturating_sub(now);
 
 				break;
 			}

@@ -14,6 +14,13 @@ use self::uring::IoUring;
 
 mod uring;
 
+/// An implementation for engine
+///
+/// All asynchronous operations are unsafe, as the user
+/// must preserve all arguments in memory until the callback is called
+///
+/// The result must be interpreted correctly, in order
+/// to prevent memory and/or file descriptor leaks
 pub trait EngineImpl {
 	fn has_work(&self) -> bool;
 	fn work(&mut self, timeout: u64) -> Result<()>;

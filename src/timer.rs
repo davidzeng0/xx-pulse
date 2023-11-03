@@ -23,7 +23,7 @@ pub struct Timer {
 
 impl Timer {
 	pub fn new(delay: Duration, flags: BitFlags<TimerFlag>) -> Timer {
-		let delay = delay.as_nanos() as u64;
+		let delay = delay.as_nanos().try_into().unwrap();
 		let expire = 0;
 
 		Timer { expire, delay, flags }

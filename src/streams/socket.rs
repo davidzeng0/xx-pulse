@@ -40,19 +40,8 @@ async fn bind_addr<A: ToSocketAddrs>(addr: A, socket_type: u32, protocol: u32) -
 
 		set_reuse_addr(socket.fd(), true)?;
 
-		let result = match &addr {
-			Address::V4(addr) => ops::bind(socket.fd(), addr).await,
-			Address::V6(addr) => ops::bind(socket.fd(), addr).await
-		};
-
-		let err = match result {
-			Ok(()) => return Ok(socket),
-			Err(err) => err
-		};
-
-		socket.close().await?;
-
-		Err(err)
+		ops::bind_addr(socket.fd(), addr).await?;
+		Ok(socket)
 	})
 	.await
 }
@@ -64,16 +53,9 @@ async fn connect_addrs<A: ToSocketAddrs>(
 	foreach_addr(addr, |addr| {
 		let socket = Socket::new_for_addr(&addr, socket_type, protocol).await?;
 
-		set_reuse_addr(socket.fd(), true)?;
+		socket.connect(addr).await?;
 
-		let err = match socket.connect_addr(addr).await {
-			Ok(()) => return Ok(socket),
-			Err(err) => err
-		};
-
-		socket.close().await?;
-
-		Err(err)
+		Ok(socket)
 	})
 	.await
 }
@@ -111,11 +93,8 @@ impl Socket {
 		ops::close(self.fd).await
 	}
 
-	pub async fn connect_addr(&self, addr: &Address) -> Result<()> {
-		match &addr {
-			Address::V4(addr) => ops::connect(self.fd(), addr).await,
-			Address::V6(addr) => ops::connect(self.fd(), addr).await
-		}
+	pub async fn connect(&self, addr: &Address) -> Result<()> {
+		ops::connect_addr(self.fd(), addr).await
 	}
 
 	pub async fn recv(&self, buf: &mut [u8], flags: u32) -> Result<usize> {
@@ -373,12 +352,12 @@ impl DatagramSocket {
 		inner = self.socket;
 
 		#[async_fn]
-		async fn connect_addr(self: &Self, addr: &Address) -> Result<()>;
+		async fn connect(self: &Self, addr: &Address) -> Result<()>;
 	}
 
 	#[async_fn]
-	pub async fn connect<A: ToSocketAddrs>(&self, addrs: A) -> Result<()> {
-		foreach_addr(addrs, |addr| self.socket.connect_addr(addr).await).await
+	pub async fn connect_addrs<A: ToSocketAddrs>(&self, addrs: A) -> Result<()> {
+		foreach_addr(addrs, |addr| self.socket.connect(addr).await).await
 	}
 }
 

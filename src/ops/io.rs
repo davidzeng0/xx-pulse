@@ -11,6 +11,7 @@ use std::{
 use xx_core::{
 	error::*,
 	os::{
+		inet::Address,
 		socket::{MessageHeader, Shutdown},
 		stat::Statx
 	},
@@ -88,6 +89,22 @@ use internal::connect as connect_raw;
 #[async_fn]
 pub async fn connect<A>(socket: BorrowedFd<'_>, addr: &A) -> Result<()> {
 	connect_raw(socket, ConstPtr::from(addr).cast(), size_of::<A>() as u32).await
+}
+
+#[async_fn]
+pub async fn connect_addr(socket: BorrowedFd<'_>, addr: &Address) -> Result<()> {
+	match &addr {
+		Address::V4(addr) => connect(socket, addr).await,
+		Address::V6(addr) => connect(socket, addr).await
+	}
+}
+
+#[async_fn]
+pub async fn bind_addr(socket: BorrowedFd<'_>, addr: &Address) -> Result<()> {
+	match &addr {
+		Address::V4(addr) => bind(socket, addr).await,
+		Address::V6(addr) => bind(socket, addr).await
+	}
 }
 
 async_engine_task!(false, recv(socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32) -> Result<usize>);
