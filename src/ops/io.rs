@@ -55,9 +55,9 @@ mod internal {
 		socket: BorrowedFd<'_>, addr: MutPtr<()>, addrlen: &mut u32
 	) -> Result<OwnedFd>);
 
-	async_engine_task!(false, connect(socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32) -> Result<()>);
+	async_engine_task!(false, connect(socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32) -> Result<()>);
 
-	async_engine_task!(false, bind(socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32) -> Result<()>);
+	async_engine_task!(false, bind(socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32) -> Result<()>);
 
 	async_engine_task!(false, statx(path: &CStr, flags: u32, mask: u32, statx: &mut Statx) -> Result<()>);
 }
@@ -79,7 +79,7 @@ use internal::accept as accept_raw;
 #[async_fn]
 pub async fn accept<A>(socket: BorrowedFd<'_>, addr: &mut A) -> Result<(OwnedFd, u32)> {
 	let mut addrlen = size_of::<A>() as u32;
-	let fd = accept_raw(socket, MutPtr::from(addr).cast(), &mut addrlen).await?;
+	let fd = accept_raw(socket, MutPtr::from(addr).as_unit(), &mut addrlen).await?;
 
 	Ok((fd, addrlen))
 }
@@ -88,7 +88,7 @@ use internal::connect as connect_raw;
 
 #[async_fn]
 pub async fn connect<A>(socket: BorrowedFd<'_>, addr: &A) -> Result<()> {
-	connect_raw(socket, ConstPtr::from(addr).cast(), size_of::<A>() as u32).await
+	connect_raw(socket, Ptr::from(addr).as_unit(), size_of::<A>() as u32).await
 }
 
 #[async_fn]
@@ -121,7 +121,7 @@ use internal::bind as bind_raw;
 
 #[async_fn]
 pub async fn bind<A>(socket: BorrowedFd<'_>, addr: &A) -> Result<()> {
-	bind_raw(socket, ConstPtr::from(addr).cast(), size_of::<A>() as u32).await
+	bind_raw(socket, Ptr::from(addr).as_unit(), size_of::<A>() as u32).await
 }
 
 async_engine_task!(false, listen(socket: BorrowedFd<'_>, backlog: i32) -> Result<()>);

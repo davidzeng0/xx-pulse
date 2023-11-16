@@ -1,5 +1,5 @@
 use xx_core::{
-	container_of, coroutines::*, error::Result, fiber::*, opt::hint::unlikely, pointer::MutPtr,
+	container_of, coroutines::*, error::*, fiber::*, opt::hint::*, pointer::*,
 	task::block_on as sync_block_on
 };
 
@@ -64,7 +64,8 @@ impl Runtime {
 			task
 		);
 
-		let running = MutPtr::from(&mut true);
+		let mut running = true;
+		let running = MutPtr::from(&mut running);
 
 		sync_block_on(
 			|_| loop {

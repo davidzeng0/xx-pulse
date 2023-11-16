@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use enumflags2::BitFlags;
-use xx_core::error::Result;
+use xx_core::error::*;
 
 use super::*;
 use crate::driver::TimeoutFlag;

@@ -12,7 +12,7 @@ use xx_core::{
 	error::{Error, ErrorKind, Result},
 	opt::hint::*,
 	os::{error::ErrorCodes, io_uring::*, mman::*, openat::OpenAt, socket::*, stat::Statx},
-	pointer::{ConstPtr, MutPtr},
+	pointer::{MutPtr, Ptr},
 	task::{Request, RequestPtr},
 	trace
 };
@@ -149,7 +149,7 @@ struct Queue<'a> {
 }
 
 fn get_ptr<'a, T>(map: &MemoryMap<'a>, off: u32) -> MutPtr<T> {
-	MutPtr::from(map.addr() + off as usize)
+	MutPtr::from_int_addr(map.addr() + off as usize)
 }
 
 fn get_ref<'a, T>(map: &MemoryMap<'a>, off: u32) -> &'a mut T {
@@ -275,7 +275,7 @@ pub struct IoUring {
 	no_op_req: Request<isize>
 }
 
-fn no_op(_: RequestPtr<isize>, _: *const (), _: isize) {}
+fn no_op(_: RequestPtr<isize>, _: Ptr<()>, _: isize) {}
 
 impl IoUring {
 	pub fn new() -> Result<Self> {
@@ -296,13 +296,17 @@ impl IoUring {
 			queue,
 			to_submit: 0,
 			to_complete: 0,
-			no_op_req: unsafe { Request::new(ConstPtr::<()>::null().as_raw_ptr(), no_op) }
+			no_op_req: unsafe { Request::new(Ptr::null(), no_op) }
 		})
 	}
 
 	#[inline(always)]
 	fn enter<F: FnOnce(&mut Self) -> Result<i32>>(&mut self, f: F) -> Result<()> {
 		self.queue.submission.sync();
+
+		if self.to_submit != 0 {
+			trace!(target: self, "<< {} Operations", self.to_submit);
+		}
 
 		let submitted = match f(self) {
 			Ok(count) => count,
@@ -336,8 +340,6 @@ impl IoUring {
 					format!("Submitted {} / {}", submitted, self.to_submit)
 				));
 			}
-
-			trace!(target: self, "<< {} Operations", submitted);
 
 			self.to_submit = 0;
 			self.to_complete += submitted as u64;
@@ -428,10 +430,7 @@ impl IoUring {
 			self.queue.completion.khead.store(head, Ordering::Release);
 			self.to_complete -= 1;
 
-			Request::complete(
-				ConstPtr::from(user_data as *const Request<isize>),
-				result as isize
-			);
+			Request::complete(Ptr::from_int_addr(user_data as usize), result as isize);
 		}
 	}
 
@@ -447,13 +446,14 @@ impl IoUring {
 
 	#[inline(always)]
 	fn push_with_request(&mut self, op: &mut SubmissionEntry, request: RequestPtr<isize>) {
-		op.user_data = request.as_raw_int() as u64;
+		op.user_data = request.int_addr() as u64;
 
 		self.push(op);
 	}
 }
 
 impl EngineImpl for IoUring {
+	#[inline(always)]
 	fn has_work(&self) -> bool {
 		self.to_complete != 0 || self.to_submit != 0
 	}
@@ -470,7 +470,7 @@ impl EngineImpl for IoUring {
 	unsafe fn cancel(&mut self, request: RequestPtr<()>) -> Result<()> {
 		let mut op = Op::cancel(0);
 
-		op.addr.addr = request.as_raw_int() as u64;
+		op.addr.addr = request.int_addr() as u64;
 
 		self.push_with_request(&mut op, (&self.no_op_req).into());
 
@@ -490,7 +490,8 @@ impl EngineImpl for IoUring {
 
 	#[inline]
 	unsafe fn close(&mut self, fd: OwnedFd, request: RequestPtr<isize>) -> Option<isize> {
-		/* into is safe here because push panics if out of memory */
+		/* into is safe here because push panics if out of memory, and we don't
+		 * handle panics */
 		let mut op = Op::close(fd.into_raw_fd());
 
 		self.push_with_request(&mut op, request);
@@ -504,8 +505,8 @@ impl EngineImpl for IoUring {
 	) -> Option<isize> {
 		let mut op = Op::read(
 			fd.as_raw_fd(),
-			buf.as_ptr() as usize,
-			buf.len() as u32,
+			MutPtr::from(buf.as_mut_ptr()).as_unit(),
+			buf.len().min(u32::MAX as usize) as u32,
 			offset,
 			0
 		);
@@ -521,8 +522,8 @@ impl EngineImpl for IoUring {
 	) -> Option<isize> {
 		let mut op = Op::write(
 			fd.as_raw_fd(),
-			buf.as_ptr() as usize,
-			buf.len() as u32,
+			Ptr::from(buf.as_ptr()).as_unit(),
+			buf.len().min(u32::MAX as usize) as u32,
 			offset,
 			0
 		);
@@ -548,7 +549,7 @@ impl EngineImpl for IoUring {
 		&mut self, socket: BorrowedFd<'_>, addr: MutPtr<()>, addrlen: &mut u32,
 		request: RequestPtr<isize>
 	) -> Option<isize> {
-		let mut op = Op::accept(socket.as_raw_fd(), addr.as_raw_int(), addrlen, 0, 0);
+		let mut op = Op::accept(socket.as_raw_fd(), addr.int_addr(), addrlen, 0, 0);
 
 		self.push_with_request(&mut op, request);
 
@@ -557,10 +558,9 @@ impl EngineImpl for IoUring {
 
 	#[inline]
 	unsafe fn connect(
-		&mut self, socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32,
-		request: RequestPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32, request: RequestPtr<isize>
 	) -> Option<isize> {
-		let mut op = Op::connect(socket.as_raw_fd(), addr.as_raw_int(), addrlen);
+		let mut op = Op::connect(socket.as_raw_fd(), addr.int_addr(), addrlen);
 
 		self.push_with_request(&mut op, request);
 
@@ -574,7 +574,7 @@ impl EngineImpl for IoUring {
 		let mut op = Op::recv(
 			socket.as_raw_fd(),
 			buf.as_mut_ptr() as usize,
-			buf.len() as u32,
+			buf.len().min(u32::MAX as usize) as u32,
 			flags
 		);
 
@@ -602,7 +602,7 @@ impl EngineImpl for IoUring {
 		let mut op = Op::send(
 			socket.as_raw_fd(),
 			buf.as_ptr() as usize,
-			buf.len() as u32,
+			buf.len().min(u32::MAX as usize) as u32,
 			flags
 		);
 
@@ -636,7 +636,7 @@ impl EngineImpl for IoUring {
 
 	#[inline]
 	unsafe fn bind(
-		&mut self, socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32, _: RequestPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32, _: RequestPtr<isize>
 	) -> Option<isize> {
 		match bind_raw(socket, addr, addrlen) {
 			Ok(()) => Some(0),

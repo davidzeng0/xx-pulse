@@ -1,3 +1,5 @@
+use xx_core::error::*;
+
 use crate::{driver::Driver, *};
 
 mod io;
@@ -19,7 +21,13 @@ async fn internal_get_runtime_context() -> Handle<RuntimeContext> {
 	get_context()
 		.await
 		.get_runtime::<RuntimeContext>()
-		.unwrap_or_else(|| panic!("Cannot use xx-pulse functions with a different runtime"))
+		.ok_or_else(|| {
+			Error::new(
+				ErrorKind::Other,
+				"Cannot use xx-pulse functions with a different runtime"
+			)
+		})
+		.unwrap()
 }
 
 #[async_fn]

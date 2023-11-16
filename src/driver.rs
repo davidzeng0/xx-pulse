@@ -6,10 +6,10 @@ use std::{
 	time::Duration
 };
 
-use enumflags2::{bitflags, BitFlags};
+use enumflags2::*;
 use xx_core::{
 	error::*,
-	opt::hint::{likely, unlikely},
+	opt::hint::*,
 	os::{
 		socket::{MessageHeader, Shutdown},
 		stat::Statx,
@@ -83,48 +83,16 @@ impl Driver {
 		time::time(ClockId::Monotonic).expect("Failed to read the clock")
 	}
 
-	fn timer_complete(&mut self, timeout: Timeout, result: Result<()>) {
+	#[inline(always)]
+	fn timer_complete(timeout: Timeout, result: Result<()>) {
 		Request::complete(timeout.request, result);
 	}
 
-	/* inline never to prevent compiler from assuming state,
-	 * see trait xx_core::task::env::Global
-	 */
-	#[inline(never)]
+	#[inline(always)]
 	fn expire_first_timer(&mut self, result: Result<()>) {
 		let timeout = self.timers.pop_first().unwrap();
 
-		self.timer_complete(timeout, result);
-	}
-
-	#[inline(never)]
-	pub fn run_timers(&mut self) -> u64 {
-		let mut timeout = Duration::from_secs(3600).as_nanos() as u64;
-		let mut now = Self::now();
-		let mut ran = false;
-
-		loop {
-			let timer = match self.timers.first() {
-				None => break,
-				Some(timer) => timer
-			};
-
-			if timer.expire > now {
-				if ran {
-					now = Self::now();
-				}
-
-				timeout = timer.expire.saturating_sub(now);
-
-				break;
-			}
-
-			ran = true;
-
-			self.expire_first_timer(Ok(()));
-		}
-
-		timeout
+		Self::timer_complete(timeout, result);
 	}
 
 	fn queue_timer(&mut self, timer: Timeout) {
@@ -132,17 +100,17 @@ impl Driver {
 	}
 
 	fn cancel_timer(&mut self, timer: Timeout) -> Result<()> {
-		match self.timers.take(&timer) {
-			None => Err(Error::new(ErrorKind::NotFound, "Timer not found")),
-			Some(timeout) => {
-				self.timer_complete(
-					timeout,
-					Err(Error::new(ErrorKind::Interrupted, "Timer cancelled"))
-				);
+		let timeout = match self.timers.take(&timer) {
+			Some(timeout) => timeout,
+			None => return Err(Error::new(ErrorKind::NotFound, "Timer not found"))
+		};
 
-				Ok(())
-			}
-		}
+		Self::timer_complete(
+			timeout,
+			Err(Error::new(ErrorKind::Interrupted, "Timer cancelled"))
+		);
+
+		Ok(())
 	}
 
 	#[sync_task]
@@ -166,32 +134,69 @@ impl Driver {
 	}
 
 	#[inline(always)]
+	pub fn run_timers(&mut self) -> u64 {
+		let mut this = MutPtr::from(self);
+		let mut timeout = Duration::from_secs(3600).as_nanos() as u64;
+		let mut now = Self::now();
+		let mut ran = false;
+
+		loop {
+			/* Safety: we are guaranteed unique access to self until expire_first_timer
+			 * returns */
+			let this = this.as_mut();
+			let timer = match this.timers.first() {
+				None => break,
+				Some(timer) => timer
+			};
+
+			if timer.expire > now {
+				if ran {
+					now = Self::now();
+				}
+
+				timeout = timer.expire.saturating_sub(now);
+
+				break;
+			}
+
+			ran = true;
+			this.expire_first_timer(Ok(()));
+		}
+
+		timeout
+	}
+
+	#[inline(always)]
 	pub fn park(&mut self, timeout: u64) -> Result<()> {
 		self.io_engine.work(timeout)
 	}
 
-	#[inline(never)]
-	fn expire_all_timers(&mut self) {
-		while self.timers.first().is_some() {
-			self.expire_first_timer(Err(driver_shutdown_error()));
-		}
-	}
-
 	pub fn exit(&mut self) -> Result<()> {
-		self.exiting = true;
-		self.expire_all_timers();
+		let mut this = MutPtr::from(self);
+
+		this.exiting = true;
 
 		loop {
-			let timeout = self.run_timers();
+			let this = this.as_mut();
 
-			if !self.io_engine.has_work() {
+			if this.timers.first().is_none() {
 				break;
 			}
 
-			self.io_engine.work(timeout)?;
+			this.expire_first_timer(Err(driver_shutdown_error()))
 		}
 
-		self.exiting = false;
+		loop {
+			let timeout = this.run_timers();
+
+			if !this.io_engine.has_work() {
+				break;
+			}
+
+			this.io_engine.work(timeout)?;
+		}
+
+		this.exiting = false;
 
 		Ok(())
 	}
@@ -236,7 +241,7 @@ impl Driver {
 
 	alias_func!(accept(socket: BorrowedFd<'_>, addr: MutPtr<()>, addrlen: &mut u32));
 
-	alias_func!(connect(socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32));
+	alias_func!(connect(socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32));
 
 	alias_func!(recv(socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32));
 
@@ -248,7 +253,7 @@ impl Driver {
 
 	alias_func!(shutdown(socket: BorrowedFd<'_>, how: Shutdown));
 
-	alias_func!(bind(socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32));
+	alias_func!(bind(socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32));
 
 	alias_func!(listen(socket: BorrowedFd<'_>, backlog: i32));
 

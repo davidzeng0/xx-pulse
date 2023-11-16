@@ -3,10 +3,7 @@ use std::time::Duration;
 use enumflags2::*;
 use xx_core::error::*;
 
-use crate::{
-	driver::{Driver, TimeoutFlag},
-	*
-};
+use crate::{driver::*, *};
 
 #[bitflags]
 #[repr(u32)]

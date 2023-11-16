@@ -51,8 +51,7 @@ pub trait EngineImpl {
 	) -> Option<isize>;
 
 	unsafe fn connect(
-		&mut self, socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32,
-		request: RequestPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32, request: RequestPtr<isize>
 	) -> Option<isize>;
 
 	unsafe fn recv(
@@ -78,8 +77,7 @@ pub trait EngineImpl {
 	) -> Option<isize>;
 
 	unsafe fn bind(
-		&mut self, socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32,
-		request: RequestPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32, request: RequestPtr<isize>
 	) -> Option<isize>;
 
 	unsafe fn listen(
@@ -165,10 +163,12 @@ impl Engine {
 		Ok(Self { inner })
 	}
 
+	#[inline(always)]
 	pub fn has_work(&self) -> bool {
 		self.inner.has_work()
 	}
 
+	#[inline(always)]
 	pub fn work(&mut self, timeout: u64) -> Result<()> {
 		self.inner.work(timeout)
 	}
@@ -187,7 +187,7 @@ impl Engine {
 
 	engine_task!(accept(socket: BorrowedFd<'_>, addr: MutPtr<()>, addrlen: &mut u32) -> Result<OwnedFd>);
 
-	engine_task!(connect(socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32) -> Result<()>);
+	engine_task!(connect(socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32) -> Result<()>);
 
 	engine_task!(recv(socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32) -> Result<usize>);
 
@@ -199,7 +199,7 @@ impl Engine {
 
 	engine_task!(shutdown(socket: BorrowedFd<'_>, how: Shutdown) -> Result<()>);
 
-	engine_task!(bind(socket: BorrowedFd<'_>, addr: ConstPtr<()>, addrlen: u32) -> Result<()>);
+	engine_task!(bind(socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32) -> Result<()>);
 
 	engine_task!(listen(socket: BorrowedFd<'_>, backlog: i32) -> Result<()>);
 

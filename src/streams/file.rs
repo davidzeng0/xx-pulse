@@ -1,17 +1,8 @@
-use std::{
-	io::SeekFrom,
-	os::fd::{AsFd, OwnedFd},
-	path::Path
-};
+use std::{io::SeekFrom, path::Path};
 
-use xx_core::{
-	async_std::io::*,
-	error::*,
-	os::{
-		fcntl::OpenFlag,
-		stat::{Statx, StatxMask}
-	},
-	read_into, write_from
+use xx_core::os::{
+	fcntl::OpenFlag,
+	stat::{Statx, StatxMask}
 };
 
 use super::*;

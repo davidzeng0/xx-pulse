@@ -1,19 +1,15 @@
 use std::{
-	io::{IoSlice, IoSliceMut},
 	mem::{size_of, size_of_val},
-	net::{SocketAddr, ToSocketAddrs},
-	os::fd::{AsFd, BorrowedFd, OwnedFd}
+	net::{SocketAddr, ToSocketAddrs}
 };
 
 use xx_core::{
-	async_std::io::*,
-	error::*,
-	os::{inet::*, iovec::IoVec, socket::*},
+	os::{inet::*, socket::*},
 	pointer::*,
-	read_into, read_wrapper, wrapper_functions, write_from, write_wrapper
+	read_wrapper, wrapper_functions, write_wrapper
 };
 
-use super::{async_fn, async_trait_impl, ops};
+use super::*;
 
 #[async_fn]
 async fn foreach_addr<A: ToSocketAddrs, F: Fn(&Address) -> Result<Output>, Output>(
@@ -30,18 +26,18 @@ async fn foreach_addr<A: ToSocketAddrs, F: Fn(&Address) -> Result<Output>, Outpu
 		}
 	}
 
-	Err(error.unwrap_or(Error::new(ErrorKind::InvalidInput, "No addresses")))
+	Err(error.unwrap_or_else(|| Error::new(ErrorKind::InvalidInput, "Address list empty")))
 }
 
 #[async_fn]
 async fn bind_addr<A: ToSocketAddrs>(addr: A, socket_type: u32, protocol: u32) -> Result<Socket> {
 	foreach_addr(addr, |addr| {
-		let socket = Socket::new_for_addr(&addr, socket_type, protocol).await?;
+		let sock = Socket::new_for_addr(&addr, socket_type, protocol).await?;
 
-		set_reuse_addr(socket.fd(), true)?;
+		set_reuse_addr(sock.fd(), true)?;
 
-		ops::bind_addr(socket.fd(), addr).await?;
-		Ok(socket)
+		ops::bind_addr(sock.fd(), addr).await?;
+		Ok(sock)
 	})
 	.await
 }
@@ -51,11 +47,11 @@ async fn connect_addrs<A: ToSocketAddrs>(
 	addr: A, socket_type: u32, protocol: u32
 ) -> Result<Socket> {
 	foreach_addr(addr, |addr| {
-		let socket = Socket::new_for_addr(&addr, socket_type, protocol).await?;
+		let sock = Socket::new_for_addr(&addr, socket_type, protocol).await?;
 
-		socket.connect(addr).await?;
+		sock.connect(addr).await?;
 
-		Ok(socket)
+		Ok(sock)
 	})
 	.await
 }
@@ -108,7 +104,7 @@ impl Socket {
 
 	pub async fn recv_vectored(&self, bufs: &mut [IoSliceMut<'_>], flags: u32) -> Result<usize> {
 		let mut header = MessageHeader {
-			iov: bufs.as_ptr() as *mut _,
+			iov: Ptr::from(bufs.as_ptr()).make_mut().cast(),
 			iov_len: bufs.len(),
 
 			..Default::default()
@@ -142,7 +138,7 @@ impl Socket {
 
 	pub async fn send_vectored(&self, bufs: &[IoSlice<'_>], flags: u32) -> Result<usize> {
 		let header = MessageHeader {
-			iov: bufs.as_ptr() as *mut _,
+			iov: Ptr::from(bufs.as_ptr()).make_mut().cast(),
 			iov_len: bufs.len(),
 
 			..Default::default()
@@ -153,13 +149,16 @@ impl Socket {
 
 	pub async fn recvfrom(&self, buf: &mut [u8], flags: u32) -> Result<(usize, SocketAddr)> {
 		let mut addr = AddressStorage::new();
-		let mut vec = IoVec { base: buf.as_ptr() as *const _, len: buf.len() };
+		let mut vec = IoVec {
+			base: MutPtr::from(buf.as_mut_ptr()).as_unit(),
+			len: buf.len()
+		};
 
 		let mut header = MessageHeader {
-			address: MutPtr::from(&mut addr).as_raw_ptr(),
+			address: MutPtr::from(&mut addr).as_unit(),
 			address_len: size_of::<AddressStorage>() as u32,
 
-			iov: MutPtr::from(&mut vec).as_ptr_mut(),
+			iov: MutPtr::from(&mut vec),
 			iov_len: 1,
 
 			..Default::default()
@@ -173,13 +172,23 @@ impl Socket {
 	pub async fn sendto(&self, buf: &[u8], flags: u32, addr: &SocketAddr) -> Result<usize> {
 		write_from!(buf);
 
-		let mut vec = IoVec { base: buf.as_ptr() as *const _, len: buf.len() };
 		let addr = addr.clone().into();
+		let mut vec = IoVec {
+			base: Ptr::from(buf.as_ptr()).as_unit().make_mut(),
+			len: buf.len()
+		};
 
 		let (address, address_len) = {
 			match &addr {
-				Address::V4(addr) => (ConstPtr::from(addr).as_raw_ptr(), size_of_val(addr) as u32),
-				Address::V6(addr) => (ConstPtr::from(addr).as_raw_ptr(), size_of_val(addr) as u32)
+				Address::V4(addr) => (
+					Ptr::from(addr).make_mut().as_unit(),
+					size_of_val(addr) as u32
+				),
+
+				Address::V6(addr) => (
+					Ptr::from(addr).make_mut().as_unit(),
+					size_of_val(addr) as u32
+				)
 			}
 		};
 
@@ -187,10 +196,10 @@ impl Socket {
 			address,
 			address_len,
 
-			iov: MutPtr::from(&mut vec).as_ptr_mut(),
+			iov: MutPtr::from(&mut vec),
 			iov_len: 1,
 
-			control: ConstPtr::<()>::null().as_ptr(),
+			control: Ptr::null(),
 			control_len: 0,
 
 			flags: 0
@@ -217,6 +226,22 @@ impl Socket {
 
 	pub async fn set_tcp_keepalive(&self, enable: bool, idle: i32) -> Result<()> {
 		set_tcp_keepalive(self.fd(), enable, idle)
+	}
+
+	pub async fn local_addr(&self) -> Result<SocketAddr> {
+		let mut addr = AddressStorage::new();
+
+		get_sock_name(self.fd(), &mut addr)?;
+
+		Ok(convert_addr(addr))
+	}
+
+	pub async fn peer_addr(&self) -> Result<SocketAddr> {
+		let mut addr = AddressStorage::new();
+
+		get_peer_name(self.fd(), &mut addr)?;
+
+		Ok(convert_addr(addr))
 	}
 }
 
@@ -269,7 +294,7 @@ pub struct StreamSocket {
 
 macro_rules! socket_common {
 	() => {
-		wrapper_functions!{
+		wrapper_functions! {
 			inner = self.socket;
 
 			#[async_fn]
@@ -282,13 +307,19 @@ macro_rules! socket_common {
 			pub async fn recv_vectored(self: &Self, bufs: &mut [IoSliceMut<'_>], flags: u32) -> Result<usize>;
 
 			#[async_fn]
+			pub async fn recvfrom(self: &Self, buf: &mut [u8], flags: u32) -> Result<(usize, SocketAddr)>;
+
+			#[async_fn]
+			pub async fn recvmsg(&self, header: &mut MessageHeader, flags: u32) -> Result<usize>;
+
+			#[async_fn]
 			pub async fn send(self: &Self, buf: &[u8], flags: u32) -> Result<usize>;
 
 			#[async_fn]
 			pub async fn send_vectored(self: &Self, bufs: &[IoSlice<'_>], flags: u32) -> Result<usize>;
 
 			#[async_fn]
-			pub async fn recvfrom(self: &Self, buf: &mut [u8], flags: u32) -> Result<(usize, SocketAddr)>;
+			pub async fn sendmsg(&self, header: &MessageHeader, flags: u32) -> Result<usize>;
 
 			#[async_fn]
 			pub async fn sendto(self: &Self, buf: &[u8], flags: u32, addr: &SocketAddr) -> Result<usize>;
@@ -301,6 +332,12 @@ macro_rules! socket_common {
 
 			#[async_fn]
 			pub async fn set_sendbuf_size(self: &Self, size: i32) -> Result<()>;
+
+			#[async_fn]
+			pub async fn local_addr(&self) -> Result<SocketAddr>;
+
+			#[async_fn]
+			pub async fn peer_addr(&self) -> Result<SocketAddr>;
 		}
 	};
 }
@@ -359,6 +396,21 @@ impl DatagramSocket {
 	pub async fn connect_addrs<A: ToSocketAddrs>(&self, addrs: A) -> Result<()> {
 		foreach_addr(addrs, |addr| self.socket.connect(addr).await).await
 	}
+
+	#[async_fn]
+	pub async fn recv_from_addr(
+		&self, from: &SocketAddr, buf: &mut [u8], flags: u32
+	) -> Result<usize> {
+		loop {
+			let (read, addr) = self.recvfrom(buf, flags).await?;
+
+			if &addr != from {
+				continue;
+			}
+
+			break Ok(read);
+		}
+	}
 }
 
 socket_impl!(DatagramSocket);
@@ -373,6 +425,12 @@ impl TcpListener {
 
 		#[async_fn]
 		async fn close(self: Self) -> Result<()>;
+
+		#[async_fn]
+		pub async fn local_addr(&self) -> Result<SocketAddr>;
+
+		#[async_fn]
+		pub async fn peer_addr(&self) -> Result<SocketAddr>;
 	}
 
 	#[async_fn]
@@ -392,17 +450,17 @@ pub struct Tcp;
 #[async_fn]
 impl Tcp {
 	pub async fn connect<A: ToSocketAddrs>(addr: A) -> Result<StreamSocket> {
-		let socket = connect_addrs(addr, SocketType::Stream as u32, IpProtocol::Tcp as u32).await?;
+		let sock = connect_addrs(addr, SocketType::Stream as u32, IpProtocol::Tcp as u32).await?;
 
-		Ok(StreamSocket { socket })
+		Ok(StreamSocket { socket: sock })
 	}
 
 	pub async fn bind<A: ToSocketAddrs>(addr: A) -> Result<TcpListener> {
-		let socket = bind_addr(addr, SocketType::Stream as u32, IpProtocol::Tcp as u32).await?;
+		let sock = bind_addr(addr, SocketType::Stream as u32, IpProtocol::Tcp as u32).await?;
 
-		ops::listen(socket.fd(), MAX_BACKLOG).await?;
+		ops::listen(sock.fd(), MAX_BACKLOG).await?;
 
-		Ok(TcpListener { socket })
+		Ok(TcpListener { socket: sock })
 	}
 }
 
@@ -411,15 +469,15 @@ pub struct Udp;
 #[async_fn]
 impl Udp {
 	pub async fn connect<A: ToSocketAddrs>(addrs: A) -> Result<DatagramSocket> {
-		let socket =
+		let sock =
 			connect_addrs(addrs, SocketType::Datagram as u32, IpProtocol::Udp as u32).await?;
 
-		Ok(DatagramSocket { socket })
+		Ok(DatagramSocket { socket: sock })
 	}
 
 	pub async fn bind<A: ToSocketAddrs>(addrs: A) -> Result<DatagramSocket> {
-		let socket = bind_addr(addrs, SocketType::Datagram as u32, IpProtocol::Udp as u32).await?;
+		let sock = bind_addr(addrs, SocketType::Datagram as u32, IpProtocol::Udp as u32).await?;
 
-		Ok(DatagramSocket { socket })
+		Ok(DatagramSocket { socket: sock })
 	}
 }
