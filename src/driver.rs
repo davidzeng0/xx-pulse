@@ -135,7 +135,7 @@ impl Driver {
 
 	#[inline(always)]
 	pub fn run_timers(&mut self) -> u64 {
-		let mut this = MutPtr::from(self);
+		let mut this = Handle::from(self);
 		let mut timeout = Duration::from_secs(3600).as_nanos() as u64;
 		let mut now = Self::now();
 		let mut ran = false;
@@ -172,7 +172,7 @@ impl Driver {
 	}
 
 	pub fn exit(&mut self) -> Result<()> {
-		let mut this = MutPtr::from(self);
+		let mut this = Handle::from(self);
 
 		this.exiting = true;
 
@@ -188,6 +188,7 @@ impl Driver {
 
 		loop {
 			let timeout = this.run_timers();
+			let this = this.as_mut();
 
 			if !this.io_engine.has_work() {
 				break;

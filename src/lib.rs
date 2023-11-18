@@ -1,16 +1,19 @@
 mod driver;
 mod engine;
 mod ops;
-mod runtime;
-mod streams;
-mod timer;
-
 pub use ops::*;
+mod runtime;
 pub use runtime::*;
+mod streams;
 pub use streams::*;
+mod timer;
 pub use timer::*;
-pub use xx_core::coroutines::{
-	async_fn, async_trait, async_trait_impl, check_interrupt, get_context, is_interrupted, Context,
-	Task
+mod macros;
+pub use macros::*;
+pub use xx_core::{
+	coroutines::{
+		async_fn, async_trait, async_trait_impl, check_interrupt, get_context, is_interrupted,
+		Context, Task
+	},
+	task::{Boxed, Global, Handle}
 };
-use xx_core::task::{Boxed, Global, Handle};
