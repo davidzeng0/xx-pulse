@@ -1,5 +1,4 @@
 use std::{
-	cmp::Ordering,
 	collections::BTreeSet,
 	ffi::CStr,
 	os::fd::{BorrowedFd, OwnedFd},
@@ -34,35 +33,10 @@ pub enum TimeoutFlag {
 	Abs = 1 << 0
 }
 
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct Timeout {
 	expire: u64,
 	request: RequestPtr<Result<()>>
-}
-
-impl PartialEq for Timeout {
-	fn eq(&self, other: &Self) -> bool {
-		self.request == other.request
-	}
-}
-
-impl Eq for Timeout {}
-
-impl Ord for Timeout {
-	fn cmp(&self, other: &Self) -> Ordering {
-		let mut ord = self.expire.cmp(&other.expire);
-
-		if ord == Ordering::Equal {
-			ord = self.request.cmp(&other.request);
-		}
-
-		ord
-	}
-}
-
-impl PartialOrd for Timeout {
-	fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-		Some(self.cmp(other))
-	}
 }
 
 fn driver_shutdown_error() -> Error {
@@ -168,7 +142,9 @@ impl Driver {
 
 	#[inline(always)]
 	pub fn park(&mut self, timeout: u64) -> Result<()> {
-		self.io_engine.work(timeout)
+		let mut this = Handle::from(self);
+
+		this.io_engine.work(timeout)
 	}
 
 	pub fn exit(&mut self) -> Result<()> {
@@ -214,17 +190,13 @@ impl Driver {
 macro_rules! alias_func {
 	($func: ident ($($arg: ident: $type: ty),*)) => {
 		#[sync_task]
-		pub fn $func(&mut self, $($arg: $type),*) -> isize {
+		pub unsafe fn $func(&mut self, $($arg: $type),*) -> isize {
 			fn cancel(self: &mut Engine) -> Result<()> {
 				/* use this fn to generate the cancel closure type */
 				Ok(())
 			}
 
-			let task = self.io_engine.$func($($arg),*);
-
-			unsafe {
-				task.run(request)
-			}
+			self.io_engine.$func($($arg),*).run(request)
 		}
 	}
 }
@@ -246,7 +218,7 @@ impl Driver {
 
 	alias_func!(recv(socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32));
 
-	alias_func!(recvmsg(socket: BorrowedFd<'_>, header: &mut MessageHeader, flags: u32));
+	alias_func!(recvmsg(socket: BorrowedFd<'_>, header: &mut MessageHeader<'_>, flags: u32));
 
 	alias_func!(send(socket: BorrowedFd<'_>, buf: &[u8], flags: u32));
 

@@ -8,5 +8,5 @@ pub async fn select<T1: Task, T2: Task>(
 ) -> coroutines::Select<T1::Output, T2::Output> {
 	let runtime = internal_get_runtime_context().await;
 
-	coroutines::select(runtime, task_1, task_2).await
+	unsafe { coroutines::select(runtime, task_1, task_2).await }
 }

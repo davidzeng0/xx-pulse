@@ -52,8 +52,8 @@ impl Rings<'_> {
 	fn map_memory<'a>(
 		size: usize, offset: MmapOffsets, fd: BorrowedFd<'_>
 	) -> Result<MemoryMap<'a>> {
-		map_memory(
-			0,
+		MemoryMap::map(
+			None,
 			size,
 			make_bitflags!(MemoryProtection::{Read | Write}).bits(),
 			MemoryType::Shared as u32 | MemoryFlag::Populate as u32,
@@ -149,7 +149,7 @@ struct Queue<'a> {
 }
 
 fn get_ptr<'a, T>(map: &MemoryMap<'a>, off: u32) -> MutPtr<T> {
-	MutPtr::from_int_addr(map.addr() + off as usize)
+	map.addr().cast::<u8>().wrapping_add(off as usize).cast()
 }
 
 fn get_ref<'a, T>(map: &MemoryMap<'a>, off: u32) -> &'a mut T {
@@ -310,25 +310,23 @@ impl IoUring {
 
 		let submitted = match f(self) {
 			Ok(count) => count,
-			Err(err) => {
-				match err.os_error().unwrap() {
-					/* no memory to submit all */
-					ErrorCodes::Again => -1,
+			Err(err) => match err.os_error().unwrap()  {
+				/* no memory to submit all */
+				ErrorCodes::Again => -1,
 
-					ErrorCodes::Time |
-					ErrorCodes::Intr |
-					/* cq overflowed */
-					ErrorCodes::Busy => {
-						if self.to_submit == 0 {
-							return Ok(());
-						}
-
-						-1
+				ErrorCodes::Time |
+				ErrorCodes::Intr |
+				/* cq overflowed */
+				ErrorCodes::Busy => {
+					if self.to_submit == 0 {
+						return Ok(());
 					}
 
-					_ => {
-						return Err(err);
-					}
+					-1
+				}
+
+				_ => {
+					return Err(err);
 				}
 			}
 		};
@@ -357,13 +355,13 @@ impl IoUring {
 			flags |= EnterFlag::GetEvents;
 		}
 
-		self.enter(|this| {
+		self.enter(|this| unsafe {
 			io_uring_enter2(
 				this.ring_fd.as_fd(),
 				this.to_submit,
 				0,
 				flags.bits(),
-				0,
+				MutPtr::null(),
 				SIGSET_SIZE
 			)
 		})
@@ -390,7 +388,7 @@ impl IoUring {
 			}
 		}
 
-		self.enter(|this| {
+		self.enter(|this| unsafe {
 			/*
 			 * the kernel doesn't read the timespec until it's actually time to wait for
 			 * cqes avoid loss due to branching here and set EXT_ARG on every enter

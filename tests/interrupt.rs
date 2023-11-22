@@ -48,7 +48,7 @@ async fn interruptible() {
 async fn test_interrupt() {
 	let task = spawn(uninterruptible()).await;
 
-	task.async_cancel().unwrap_err();
+	unsafe { task.async_cancel() }.unwrap_err();
 
 	let mut task = spawn(interruptible()).await;
 

@@ -136,12 +136,12 @@ macro_rules! engine_task {
 	($func: ident ($($arg: ident: $type: ty),*) -> $return_type: ty) => {
 		#[sync_task]
 		#[inline(always)]
-        pub fn $func(&mut self, $($arg: $type),*) -> isize {
+        pub unsafe fn $func(&mut self, $($arg: $type),*) -> isize {
 			fn cancel(self: &mut Self) -> Result<()> {
 				unsafe { self.inner.cancel(request.cast()) }
 			}
 
-			match unsafe { self.inner.$func($($arg),*, request) } {
+			match self.inner.$func($($arg),*, request) {
 				None => Progress::Pending(cancel(self, request)),
 				Some(result) => Progress::Done(result),
 			}
@@ -191,7 +191,7 @@ impl Engine {
 
 	engine_task!(recv(socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32) -> Result<usize>);
 
-	engine_task!(recvmsg(socket: BorrowedFd<'_>, header: &mut MessageHeader, flags: u32) -> Result<usize>);
+	engine_task!(recvmsg(socket: BorrowedFd<'_>, header: &mut MessageHeader<'_>, flags: u32) -> Result<usize>);
 
 	engine_task!(send(socket: BorrowedFd<'_>, buf: &[u8], flags: u32) -> Result<usize>);
 

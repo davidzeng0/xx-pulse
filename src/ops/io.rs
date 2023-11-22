@@ -34,7 +34,7 @@ macro_rules! async_engine_task {
 				driver.check_exiting()?;
 			}
 
-			let result = block_on(driver.$func($($arg),*)).await;
+			let result = block_on(unsafe { driver.$func($($arg),*) }).await;
 
 			paste::paste! { Engine::[<result_for_ $func>](result) }
 		}
@@ -108,9 +108,11 @@ pub async fn bind_addr(socket: BorrowedFd<'_>, addr: &Address) -> Result<()> {
 }
 
 async_engine_task!(false, recv(socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32) -> Result<usize>);
+
 async_engine_task!(false, recvmsg(
-	socket: BorrowedFd<'_>, header: &mut MessageHeader, flags: u32
+	socket: BorrowedFd<'_>, header: &mut MessageHeader<'_>, flags: u32
 ) -> Result<usize>);
+
 async_engine_task!(false, send(socket: BorrowedFd<'_>, buf: &[u8], flags: u32) -> Result<usize>);
 
 async_engine_task!(false, sendmsg(socket: BorrowedFd<'_>, header: &MessageHeader, flags: u32) -> Result<usize>);

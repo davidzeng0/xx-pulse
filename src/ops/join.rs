@@ -8,5 +8,5 @@ pub async fn join<T1: Task, T2: Task>(
 ) -> coroutines::Join<T1::Output, T2::Output> {
 	let runtime = internal_get_runtime_context().await;
 
-	coroutines::join(runtime, task_1, task_2).await
+	unsafe { coroutines::join(runtime, task_1, task_2).await }
 }

@@ -8,6 +8,7 @@ use crate::{driver::Driver, *};
 static mut POOL: Pool = Pool::new();
 
 pub(super) struct RuntimeContext {
+	executor: Handle<Executor>,
 	driver: Handle<Driver>,
 	context: Context
 }
@@ -15,8 +16,9 @@ pub(super) struct RuntimeContext {
 impl RuntimeContext {
 	fn new(executor: Handle<Executor>, driver: Handle<Driver>, worker: Handle<Worker>) -> Self {
 		Self {
+			executor,
 			driver,
-			context: Context::new::<Self>(executor, worker)
+			context: Context::new::<Self>(worker)
 		}
 	}
 
@@ -39,6 +41,10 @@ impl PerContextRuntime for RuntimeContext {
 	fn new_from_worker(&mut self, worker: Handle<Worker>) -> Self {
 		RuntimeContext::new(self.executor(), self.driver, worker)
 	}
+
+	fn executor(&mut self) -> Handle<Executor> {
+		self.executor
+	}
 }
 
 pub struct Runtime {
@@ -58,27 +64,33 @@ impl Runtime {
 		let driver = (&mut handle.driver).into();
 		let executor = (&mut handle.executor).into();
 
-		let task = spawn_sync(
-			executor,
-			|worker| RuntimeContext::new(executor, driver, worker),
-			task
-		);
+		let task = unsafe {
+			spawn_sync(
+				executor,
+				|worker| RuntimeContext::new(executor, driver, worker),
+				task
+			)
+		};
 
 		let mut running = true;
 		let running = MutPtr::from(&mut running);
 
 		sync_block_on(
-			|_| loop {
-				let timeout = handle.driver.run_timers();
+			|_| {
+				let driver = &mut handle.driver;
 
-				if unlikely(!*running) {
-					break;
-				}
+				loop {
+					let timeout = driver.run_timers();
 
-				handle.driver.park(timeout).unwrap();
+					if unlikely(!*running) {
+						break;
+					}
 
-				if unlikely(!*running) {
-					break;
+					driver.park(timeout).unwrap();
+
+					if unlikely(!*running) {
+						break;
+					}
 				}
 			},
 			|| {
