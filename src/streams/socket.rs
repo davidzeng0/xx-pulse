@@ -292,6 +292,9 @@ macro_rules! socket_common {
 			pub async fn sendto(&self, buf: &[u8], flags: u32, addr: &SocketAddr) -> Result<usize>;
 
 			#[async_fn]
+			pub async fn poll(&self, flags: BitFlags<PollFlag>) -> Result<BitFlags<PollFlag>>;
+
+			#[async_fn]
 			pub async fn shutdown(&self, how: Shutdown) -> Result<()>;
 
 			#[async_fn]
