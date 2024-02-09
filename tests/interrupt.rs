@@ -1,30 +1,32 @@
 use std::time::Duration;
 
-use xx_core::coroutines::{interrupt_guard, take_interrupt};
+use xx_core::coroutines::{interrupt_guard, is_interrupted, take_interrupt};
 use xx_pulse::*;
 
-#[async_fn]
+#[asynchronous]
 async fn uninterruptible() {
-	let guard = interrupt_guard().await;
+	unsafe {
+		let guard = interrupt_guard().await;
 
-	let _ = sleep(Duration::from_secs(1)).await;
+		let _ = sleep(Duration::from_secs(1)).await;
 
-	for _ in 0..200 {
-		interrupt_guard().await;
+		for _ in 0..200 {
+			interrupt_guard().await;
+		}
+
+		let interrupted = is_interrupted().await;
+
+		assert!(!interrupted);
+
+		drop(guard);
+
+		let interrupted = is_interrupted().await;
+
+		assert!(interrupted);
 	}
-
-	let interrupted = is_interrupted().await;
-
-	assert!(!interrupted);
-
-	drop(guard);
-
-	let interrupted = is_interrupted().await;
-
-	assert!(interrupted);
 }
 
-#[async_fn]
+#[asynchronous]
 async fn interruptible() {
 	sleep(Duration::from_secs(1)).await.unwrap_err();
 

@@ -26,8 +26,7 @@ impl Timer {
 		Timer { expire, delay, flags }
 	}
 
-	#[async_fn]
-	#[inline(always)]
+	#[asynchronous]
 	pub async fn next(&mut self) -> Result<()> {
 		if self.delay == 0 {
 			return Ok(());

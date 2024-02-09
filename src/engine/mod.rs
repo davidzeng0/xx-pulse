@@ -25,74 +25,71 @@ pub trait EngineImpl {
 	fn has_work(&self) -> bool;
 	fn work(&mut self, timeout: u64) -> Result<()>;
 
-	unsafe fn cancel(&mut self, request: RequestPtr<()>) -> Result<()>;
+	unsafe fn cancel(&mut self, request: ReqPtr<()>) -> Result<()>;
 
 	unsafe fn open(
-		&mut self, path: &CStr, flags: u32, mode: u32, request: RequestPtr<isize>
+		&mut self, path: &CStr, flags: u32, mode: u32, request: ReqPtr<isize>
 	) -> Option<isize>;
 
-	unsafe fn close(&mut self, fd: OwnedFd, request: RequestPtr<isize>) -> Option<isize>;
+	unsafe fn close(&mut self, fd: OwnedFd, request: ReqPtr<isize>) -> Option<isize>;
 
 	unsafe fn read(
-		&mut self, fd: BorrowedFd<'_>, buf: &mut [u8], offset: i64, request: RequestPtr<isize>
+		&mut self, fd: BorrowedFd<'_>, buf: &mut [u8], offset: i64, request: ReqPtr<isize>
 	) -> Option<isize>;
 
 	unsafe fn write(
-		&mut self, fd: BorrowedFd<'_>, buf: &[u8], offset: i64, request: RequestPtr<isize>
+		&mut self, fd: BorrowedFd<'_>, buf: &[u8], offset: i64, request: ReqPtr<isize>
 	) -> Option<isize>;
 
 	unsafe fn socket(
-		&mut self, domain: u32, socket_type: u32, protocol: u32, request: RequestPtr<isize>
+		&mut self, domain: u32, socket_type: u32, protocol: u32, request: ReqPtr<isize>
 	) -> Option<isize>;
 
 	unsafe fn accept(
 		&mut self, socket: BorrowedFd<'_>, addr: MutPtr<()>, addrlen: &mut u32,
-		request: RequestPtr<isize>
+		request: ReqPtr<isize>
 	) -> Option<isize>;
 
 	unsafe fn connect(
-		&mut self, socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32, request: RequestPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32, request: ReqPtr<isize>
 	) -> Option<isize>;
 
 	unsafe fn recv(
-		&mut self, socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32, request: RequestPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32, request: ReqPtr<isize>
 	) -> Option<isize>;
 
 	unsafe fn recvmsg(
-		&mut self, socket: BorrowedFd<'_>, header: &mut MessageHeader, flags: u32,
-		request: RequestPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, header: &mut MsgHdr, flags: u32, request: ReqPtr<isize>
 	) -> Option<isize>;
 
 	unsafe fn send(
-		&mut self, socket: BorrowedFd<'_>, buf: &[u8], flags: u32, request: RequestPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, buf: &[u8], flags: u32, request: ReqPtr<isize>
 	) -> Option<isize>;
 
 	unsafe fn sendmsg(
-		&mut self, socket: BorrowedFd<'_>, header: &MessageHeader, flags: u32,
-		request: RequestPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, header: &MsgHdr, flags: u32, request: ReqPtr<isize>
 	) -> Option<isize>;
 
 	unsafe fn shutdown(
-		&mut self, socket: BorrowedFd<'_>, how: Shutdown, request: RequestPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, how: Shutdown, request: ReqPtr<isize>
 	) -> Option<isize>;
 
 	unsafe fn bind(
-		&mut self, socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32, request: RequestPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32, request: ReqPtr<isize>
 	) -> Option<isize>;
 
 	unsafe fn listen(
-		&mut self, socket: BorrowedFd<'_>, backlog: i32, request: RequestPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, backlog: i32, request: ReqPtr<isize>
 	) -> Option<isize>;
 
-	unsafe fn fsync(&mut self, file: BorrowedFd<'_>, request: RequestPtr<isize>) -> Option<isize>;
+	unsafe fn fsync(&mut self, file: BorrowedFd<'_>, request: ReqPtr<isize>) -> Option<isize>;
 
 	unsafe fn statx(
-		&mut self, path: &CStr, flags: u32, mask: u32, statx: &mut Statx,
-		request: RequestPtr<isize>
+		&mut self, path: &CStr, flags: u32, mask: u32, statx: &mut Statx, request: ReqPtr<isize>
 	) -> Option<isize>;
 
 	unsafe fn poll(
-		&mut self, fd: BorrowedFd<'_>, mask: u32, request: RequestPtr<isize>
+		&mut self, fd: BorrowedFd<'_>, mask: u32, request: ReqPtr<isize>
 	) -> Option<isize>;
 }
 
@@ -134,7 +131,7 @@ impl FromEngineResult for Result<OwnedFd> {
 
 macro_rules! engine_task {
 	($func: ident ($($arg: ident: $type: ty),*) -> $return_type: ty) => {
-		#[sync_task]
+		#[future]
 		#[inline(always)]
         pub unsafe fn $func(&mut self, $($arg: $type),*) -> isize {
 			fn cancel(self: &mut Self) -> Result<()> {
@@ -191,11 +188,11 @@ impl Engine {
 
 	engine_task!(recv(socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32) -> Result<usize>);
 
-	engine_task!(recvmsg(socket: BorrowedFd<'_>, header: &mut MessageHeader<'_>, flags: u32) -> Result<usize>);
+	engine_task!(recvmsg(socket: BorrowedFd<'_>, header: &mut MsgHdr, flags: u32) -> Result<usize>);
 
 	engine_task!(send(socket: BorrowedFd<'_>, buf: &[u8], flags: u32) -> Result<usize>);
 
-	engine_task!(sendmsg(socket: BorrowedFd<'_>, header: &MessageHeader, flags: u32) -> Result<usize>);
+	engine_task!(sendmsg(socket: BorrowedFd<'_>, header: &MsgHdr, flags: u32) -> Result<usize>);
 
 	engine_task!(shutdown(socket: BorrowedFd<'_>, how: Shutdown) -> Result<()>);
 

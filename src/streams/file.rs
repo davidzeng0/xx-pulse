@@ -13,10 +13,10 @@ pub struct File {
 	length: u64
 }
 
-#[async_fn]
+#[asynchronous]
 impl File {
 	pub async fn open(path: impl AsRef<Path>) -> Result<File> {
-		let mut stat = Statx::new();
+		let mut stat = Statx::default();
 
 		statx(path.as_ref(), 0, 0, &mut stat).await?;
 
@@ -27,7 +27,7 @@ impl File {
 				length: stat.size
 			})
 		} else {
-			Err(Error::new(ErrorKind::Other, "Failed to query file size"))
+			Err(Error::simple(ErrorKind::Other, "Failed to query file size"))
 		}
 	}
 
@@ -86,14 +86,14 @@ impl File {
 	}
 }
 
-#[async_trait_impl]
+#[asynchronous]
 impl Read for File {
 	async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
 		self.read(buf).await
 	}
 }
 
-#[async_trait_impl]
+#[asynchronous]
 impl Write for File {
 	async fn write(&mut self, buf: &[u8]) -> Result<usize> {
 		self.write(buf).await
@@ -104,7 +104,7 @@ impl Write for File {
 	}
 }
 
-#[async_trait_impl]
+#[asynchronous]
 impl Seek for File {
 	async fn seek(&mut self, seek: SeekFrom) -> Result<u64> {
 		self.seek(seek).await
@@ -127,4 +127,4 @@ impl Seek for File {
 	}
 }
 
-impl Split for File {}
+unsafe impl SimpleSplit for File {}

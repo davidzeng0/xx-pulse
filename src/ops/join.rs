@@ -2,7 +2,7 @@ use xx_core::coroutines;
 
 use super::*;
 
-#[async_fn]
+#[asynchronous]
 pub async fn join<T1: Task, T2: Task>(
 	task_1: T1, task_2: T2
 ) -> coroutines::Join<T1::Output, T2::Output> {

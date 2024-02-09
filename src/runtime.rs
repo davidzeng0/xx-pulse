@@ -1,20 +1,20 @@
 use xx_core::{
 	container_of, coroutines::*, error::*, fiber::*, opt::hint::*, pointer::*,
-	task::block_on as sync_block_on
+	task::block_on::block_on as sync_block_on
 };
 
-use crate::{driver::Driver, *};
+use crate::driver::Driver;
 
 static mut POOL: Pool = Pool::new();
 
-pub(super) struct RuntimeContext {
-	executor: Handle<Executor>,
-	driver: Handle<Driver>,
+pub(super) struct Pulse {
+	executor: Ptr<Executor>,
+	driver: Ptr<Driver>,
 	context: Context
 }
 
-impl RuntimeContext {
-	fn new(executor: Handle<Executor>, driver: Handle<Driver>, worker: Handle<Worker>) -> Self {
+impl Pulse {
+	fn new(executor: Ptr<Executor>, driver: Ptr<Driver>, worker: Ptr<Worker>) -> Self {
 		Self {
 			executor,
 			driver,
@@ -22,27 +22,25 @@ impl RuntimeContext {
 		}
 	}
 
-	pub fn driver(&mut self) -> Handle<Driver> {
+	pub fn driver(&self) -> Ptr<Driver> {
 		self.driver
 	}
 }
 
-impl Global for RuntimeContext {}
-
-impl PerContextRuntime for RuntimeContext {
-	fn context(&mut self) -> &mut Context {
-		&mut self.context
+impl Environment for Pulse {
+	fn context(&self) -> &Context {
+		&self.context
 	}
 
-	fn from_context(context: &mut Context) -> &mut Self {
-		unsafe { container_of!(context, RuntimeContext, context) }
+	fn from_context(context: &Context) -> Ptr<Self> {
+		unsafe { container_of!(Ptr::from(context), Pulse, context) }.cast_const()
 	}
 
-	fn new_from_worker(&mut self, worker: Handle<Worker>) -> Self {
-		RuntimeContext::new(self.executor(), self.driver, worker)
+	unsafe fn clone(&self, worker: Ptr<Worker>) -> Self {
+		Pulse::new(self.executor(), self.driver, worker)
 	}
 
-	fn executor(&mut self) -> Handle<Executor> {
+	fn executor(&self) -> Ptr<Executor> {
 		self.executor
 	}
 }
@@ -53,21 +51,23 @@ pub struct Runtime {
 }
 
 impl Runtime {
-	pub fn new() -> Result<Boxed<Self>> {
-		let runtime = Self { driver: Driver::new()?, executor: Executor::new() };
+	pub fn new() -> Result<Pinned<Box<Self>>> {
+		let runtime = Self {
+			driver: Driver::new()?,
+			executor: unsafe { Executor::new_with_pool(Ptr::from(&POOL)) }
+		};
 
-		Ok(Boxed::new(runtime))
+		Ok(runtime.pin_box())
 	}
 
 	pub fn block_on<T: Task>(&mut self, task: T) -> T::Output {
-		let mut handle = Handle::from(self);
-		let driver = (&mut handle.driver).into();
-		let executor = (&mut handle.executor).into();
+		let driver = Ptr::from(&self.driver);
+		let executor = Ptr::from(&self.executor);
 
 		let task = unsafe {
-			spawn_sync(
+			spawn_future(
 				executor,
-				|worker| RuntimeContext::new(executor, driver, worker),
+				|worker| Pulse::new(executor, driver, worker),
 				task
 			)
 		};
@@ -76,21 +76,17 @@ impl Runtime {
 		let running = MutPtr::from(&mut running);
 
 		sync_block_on(
-			|_| {
-				let driver = &mut handle.driver;
+			move |_| loop {
+				let timeout = driver.run_timers();
 
-				loop {
-					let timeout = driver.run_timers();
+				if unlikely(!*running) {
+					break;
+				}
 
-					if unlikely(!*running) {
-						break;
-					}
+				driver.park(timeout).unwrap();
 
-					driver.park(timeout).unwrap();
-
-					if unlikely(!*running) {
-						break;
-					}
+				if unlikely(!*running) {
+					break;
 				}
 			},
 			|| {
@@ -107,10 +103,8 @@ impl Drop for Runtime {
 	}
 }
 
-impl Global for Runtime {
-	unsafe fn pinned(&mut self) {
-		self.driver.pinned();
-		self.executor.pinned();
-		self.executor.set_pool((&mut POOL).into());
+unsafe impl Pin for Runtime {
+	unsafe fn pin(&mut self) {
+		self.executor.pin();
 	}
 }

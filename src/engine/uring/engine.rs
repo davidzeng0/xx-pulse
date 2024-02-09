@@ -1,5 +1,4 @@
 use std::{
-	cmp::max,
 	ffi::CStr,
 	mem::size_of,
 	os::fd::{AsFd, AsRawFd, BorrowedFd, IntoRawFd, OwnedFd},
@@ -9,49 +8,32 @@ use std::{
 
 use enumflags2::{make_bitflags, BitFlags};
 use xx_core::{
-	error::{Error, ErrorKind, Result},
+	error::*,
 	opt::hint::*,
-	os::{error::ErrorCodes, io_uring::*, mman::*, openat::OpenAt, socket::*, stat::Statx},
-	pointer::{MutPtr, Ptr},
-	task::{Request, RequestPtr},
+	os::{error::*, io_uring::*, mman::*, openat::*, socket::*, stat::*},
+	pointer::*,
+	task::*,
 	trace
 };
 
-use super::op::*;
-use crate::engine::EngineImpl;
-
-struct DualMapping<'a> {
-	submission_ring: MemoryMap<'a>,
-	completion_ring: MemoryMap<'a>
-}
-
-struct SingleMapping<'a> {
-	ring: MemoryMap<'a>
-}
-
-enum RingMappings<'a> {
-	Dual(DualMapping<'a>),
-	Single(SingleMapping<'a>)
-}
-
-impl<'a> RingMappings<'a> {
-	fn rings(&self) -> (&MemoryMap<'a>, &MemoryMap<'a>) {
-		match self {
-			RingMappings::Dual(map) => (&map.submission_ring, &map.completion_ring),
-			RingMappings::Single(map) => (&map.ring, &map.ring)
-		}
-	}
-}
+use super::*;
 
 struct Rings<'a> {
-	rings: RingMappings<'a>,
+	ring: MemoryMap<'a>,
+	separate_completion_ring: Option<MemoryMap<'a>>,
 	submission_entries: MemoryMap<'a>
 }
 
-impl Rings<'_> {
-	fn map_memory<'a>(
-		size: usize, offset: MmapOffsets, fd: BorrowedFd<'_>
-	) -> Result<MemoryMap<'a>> {
+impl<'a> Rings<'a> {
+	fn scale<T>(mut count: u32, offset: u32, wide: bool) -> usize {
+		if wide {
+			count *= 2;
+		}
+
+		offset as usize + size_of::<T>() * count as usize
+	}
+
+	fn map_memory(size: usize, offset: MmapOffsets, fd: BorrowedFd<'_>) -> Result<MemoryMap<'a>> {
 		MemoryMap::map(
 			None,
 			size,
@@ -62,15 +44,15 @@ impl Rings<'_> {
 		)
 	}
 
-	fn scale<T>(mut count: u32, offset: u32, wide: bool) -> usize {
-		if wide {
-			count *= 2;
-		}
-
-		offset as usize + size_of::<T>() * count as usize
+	fn submission_ring(&self) -> &MemoryMap<'a> {
+		&self.ring
 	}
 
-	pub fn new(fd: BorrowedFd<'_>, params: &Parameters) -> Result<Self> {
+	fn completion_ring(&self) -> &MemoryMap<'a> {
+		self.separate_completion_ring.as_ref().unwrap_or(&self.ring)
+	}
+
+	fn new(fd: BorrowedFd<'_>, params: &Parameters) -> Result<Self> {
 		let ring_sizes = (
 			Self::scale::<u32>(params.sq_entries, params.sq_off.array, false),
 			Self::scale::<CompletionEntry>(
@@ -80,19 +62,25 @@ impl Rings<'_> {
 			)
 		);
 
-		let rings = if params.features().intersects(Feature::SingleMmap) {
-			RingMappings::Single(SingleMapping {
-				ring: Self::map_memory(
-					max(ring_sizes.0, ring_sizes.1),
+		let (ring, separate_completion_ring) = if params.features().intersects(Feature::SingleMmap)
+		{
+			(
+				Self::map_memory(
+					ring_sizes.0.max(ring_sizes.1),
 					MmapOffsets::SubmissionRing,
 					fd
-				)?
-			})
+				)?,
+				None
+			)
 		} else {
-			RingMappings::Dual(DualMapping {
-				submission_ring: Self::map_memory(ring_sizes.0, MmapOffsets::SubmissionRing, fd)?,
-				completion_ring: Self::map_memory(ring_sizes.1, MmapOffsets::CompletionRing, fd)?
-			})
+			(
+				Self::map_memory(ring_sizes.0, MmapOffsets::SubmissionRing, fd)?,
+				Some(Self::map_memory(
+					ring_sizes.1,
+					MmapOffsets::CompletionRing,
+					fd
+				)?)
+			)
 		};
 
 		let submission_entries_size = Self::scale::<SubmissionEntry>(
@@ -102,7 +90,8 @@ impl Rings<'_> {
 		);
 
 		Ok(Self {
-			rings,
+			ring,
+			separate_completion_ring,
 			submission_entries: Self::map_memory(
 				submission_entries_size,
 				MmapOffsets::SubmissionEntries,
@@ -149,20 +138,20 @@ struct Queue<'a> {
 }
 
 fn get_ptr<'a, T>(map: &MemoryMap<'a>, off: u32) -> MutPtr<T> {
-	map.addr().cast::<u8>().wrapping_add(off as usize).cast()
+	map.addr().cast::<u8>().add(off as usize).cast()
 }
 
-fn get_ref<'a, T>(map: &MemoryMap<'a>, off: u32) -> &'a mut T {
+unsafe fn get_ref<'a, T>(map: &MemoryMap<'a>, off: u32) -> &'a mut T {
 	get_ptr::<T>(map, off).as_mut()
 }
 
-fn get_array<'a, T>(map: &MemoryMap<'a>, off: u32, len: u32) -> &'a mut [T] {
-	unsafe { slice::from_raw_parts_mut(get_ref::<T>(map, off), len as usize) }
+unsafe fn get_array<'a, T>(map: &MemoryMap<'a>, off: u32, len: u32) -> &'a mut [T] {
+	slice::from_raw_parts_mut(get_ref::<T>(map, off), len as usize)
 }
 
 impl<'a> SubmissionQueue<'a> {
-	fn new(maps: &Rings<'a>, params: &Parameters) -> SubmissionQueue<'a> {
-		let ring = maps.rings.rings().0;
+	unsafe fn new(maps: &Rings<'a>, params: &Parameters) -> SubmissionQueue<'a> {
+		let ring = maps.submission_ring();
 		let array = get_array(ring, params.sq_off.array, params.sq_entries);
 
 		for (i, elem) in array.iter_mut().enumerate() {
@@ -191,15 +180,16 @@ impl<'a> SubmissionQueue<'a> {
 		unsafe { BitFlags::from_bits_unchecked(flags) }
 	}
 
-	fn get_entry(&mut self, index: u32) -> &mut SubmissionEntry {
-		unsafe { self.entries.get_unchecked_mut((index & self.mask) as usize) }
+	unsafe fn get_entry(&mut self, index: u32) -> &mut SubmissionEntry {
+		self.entries.get_unchecked_mut((index & self.mask) as usize)
 	}
 
 	fn next(&mut self) -> &mut SubmissionEntry {
 		let tail = self.tail;
 
 		self.tail = self.tail.wrapping_add(1);
-		self.get_entry(tail & self.mask)
+
+		unsafe { self.get_entry(tail & self.mask) }
 	}
 
 	fn sync(&mut self) {
@@ -209,8 +199,8 @@ impl<'a> SubmissionQueue<'a> {
 
 #[allow(dead_code)]
 impl<'a> CompletionQueue<'a> {
-	fn new(maps: &Rings<'a>, params: &Parameters) -> CompletionQueue<'a> {
-		let ring = maps.rings.rings().1;
+	unsafe fn new(maps: &Rings<'a>, params: &Parameters) -> CompletionQueue<'a> {
+		let ring = maps.completion_ring();
 
 		CompletionQueue {
 			khead: get_ref(ring, params.cq_off.head),
@@ -231,8 +221,8 @@ impl<'a> CompletionQueue<'a> {
 		unsafe { BitFlags::from_bits_unchecked(flags) }
 	}
 
-	fn get_entry(&mut self, index: u32) -> &mut CompletionEntry {
-		unsafe { self.entries.get_unchecked_mut(index as usize) }
+	unsafe fn get_entry(&mut self, index: u32) -> &mut CompletionEntry {
+		self.entries.get_unchecked_mut(index as usize)
 	}
 
 	fn read_ring(&self) -> (u32, u32) {
@@ -244,7 +234,7 @@ impl<'a> CompletionQueue<'a> {
 }
 
 impl<'a> Queue<'a> {
-	fn new(rings: Rings<'a>, params: Parameters) -> Queue<'a> {
+	unsafe fn new(rings: Rings<'a>, params: Parameters) -> Queue<'a> {
 		Queue {
 			submission: SubmissionQueue::new(&rings, &params),
 			completion: CompletionQueue::new(&rings, &params),
@@ -270,16 +260,16 @@ pub struct IoUring {
 	queue: Queue<'static>,
 
 	to_complete: u64,
-	to_submit: u32,
-
-	no_op_req: Request<isize>
+	to_submit: u32
 }
 
-fn no_op(_: RequestPtr<isize>, _: Ptr<()>, _: isize) {}
+fn no_op(_: ReqPtr<isize>, _: Ptr<()>, _: isize) {}
+
+const NO_OP: Request<isize> = Request::new(Ptr::null(), no_op);
 
 impl IoUring {
 	pub fn new() -> Result<Self> {
-		let mut params = Parameters::new();
+		let mut params = Parameters::default();
 
 		params.sq_entries = 256;
 		params.cq_entries = 65536;
@@ -289,15 +279,9 @@ impl IoUring {
 
 		let ring_fd = io_uring_setup(params.sq_entries, &mut params)?;
 		let rings = Rings::new(ring_fd.as_fd(), &params)?;
-		let queue = Queue::new(rings, params);
+		let queue = unsafe { Queue::new(rings, params) };
 
-		Ok(Self {
-			ring_fd,
-			queue,
-			to_submit: 0,
-			to_complete: 0,
-			no_op_req: unsafe { Request::new(Ptr::null(), no_op) }
-		})
+		Ok(Self { ring_fd, queue, to_submit: 0, to_complete: 0 })
 	}
 
 	#[inline(always)]
@@ -312,12 +296,12 @@ impl IoUring {
 			Ok(count) => count,
 			Err(err) => match err.os_error().unwrap()  {
 				/* no memory to submit all */
-				ErrorCodes::Again => -1,
+				OsError::Again => -1,
 
-				ErrorCodes::Time |
-				ErrorCodes::Intr |
+				OsError::Time |
+				OsError::Intr |
 				/* cq overflowed */
-				ErrorCodes::Busy => {
+				OsError::Busy => {
 					if self.to_submit == 0 {
 						return Ok(());
 					}
@@ -333,7 +317,7 @@ impl IoUring {
 
 		if self.to_submit != 0 {
 			if submitted != self.to_submit as i32 {
-				return Err(Error::new(
+				return Err(Error::simple(
 					ErrorKind::OutOfMemory,
 					format!("Submitted {} / {}", submitted, self.to_submit)
 				));
@@ -367,7 +351,6 @@ impl IoUring {
 		})
 	}
 
-	#[inline(always)]
 	fn submit_and_wait(&mut self, timeout: u64) -> Result<(u32, u32)> {
 		let flags = make_bitflags!(EnterFlag::{GetEvents});
 		let mut wait = 0;
@@ -415,20 +398,22 @@ impl IoUring {
 
 		trace!(target: self, ">> {} Completions", tail.wrapping_sub(head));
 
-		while tail != head {
-			let CompletionEntry { user_data, result, .. } =
-				*self.queue.completion.get_entry(head & mask);
+		unsafe {
+			while tail != head {
+				let CompletionEntry { user_data, result, .. } =
+					*self.queue.completion.get_entry(head & mask);
 
-			/*
-			 * more requests may be queued in callback, so
-			 * update the cqe head here so that we have one more cqe
-			 * available for completions before overflow occurs
-			 */
-			head = head.wrapping_add(1);
-			self.queue.completion.khead.store(head, Ordering::Release);
-			self.to_complete -= 1;
+				/*
+				 * more requests may be queued in callback, so
+				 * update the cqe head here so that we have one more cqe
+				 * available for completions before overflow occurs
+				 */
+				head = head.wrapping_add(1);
+				self.queue.completion.khead.store(head, Ordering::Release);
+				self.to_complete -= 1;
 
-			Request::complete(Ptr::from_int_addr(user_data as usize), result as isize);
+				Request::complete(Ptr::from_int_addr(user_data as usize), result as isize);
+			}
 		}
 	}
 
@@ -443,7 +428,7 @@ impl IoUring {
 	}
 
 	#[inline(always)]
-	fn push_with_request(&mut self, op: &mut SubmissionEntry, request: RequestPtr<isize>) {
+	fn push_with_request(&mut self, op: &mut SubmissionEntry, request: ReqPtr<isize>) {
 		op.user_data = request.int_addr() as u64;
 
 		self.push(op);
@@ -451,12 +436,11 @@ impl IoUring {
 }
 
 impl EngineImpl for IoUring {
-	#[inline(always)]
+	#[inline]
 	fn has_work(&self) -> bool {
 		self.to_complete != 0 || self.to_submit != 0
 	}
 
-	#[inline]
 	fn work(&mut self, timeout: u64) -> Result<()> {
 		let events = self.submit_and_wait(timeout).expect("Failed to get events");
 
@@ -465,19 +449,18 @@ impl EngineImpl for IoUring {
 		Ok(())
 	}
 
-	unsafe fn cancel(&mut self, request: RequestPtr<()>) -> Result<()> {
+	unsafe fn cancel(&mut self, request: ReqPtr<()>) -> Result<()> {
 		let mut op = Op::cancel(0);
 
 		op.addr.addr = request.int_addr() as u64;
 
-		self.push_with_request(&mut op, (&self.no_op_req).into());
+		self.push_with_request(&mut op, Ptr::from(&NO_OP));
 
 		Ok(())
 	}
 
-	#[inline]
 	unsafe fn open(
-		&mut self, path: &CStr, flags: u32, mode: u32, request: RequestPtr<isize>
+		&mut self, path: &CStr, flags: u32, mode: u32, request: ReqPtr<isize>
 	) -> Option<isize> {
 		let mut op = Op::openat(OpenAt::CurrentWorkingDirectory as i32, path, flags, mode, 0);
 
@@ -486,8 +469,7 @@ impl EngineImpl for IoUring {
 		None
 	}
 
-	#[inline]
-	unsafe fn close(&mut self, fd: OwnedFd, request: RequestPtr<isize>) -> Option<isize> {
+	unsafe fn close(&mut self, fd: OwnedFd, request: ReqPtr<isize>) -> Option<isize> {
 		/* into is safe here because push panics if out of memory, and we don't
 		 * handle panics */
 		let mut op = Op::close(fd.into_raw_fd());
@@ -497,9 +479,8 @@ impl EngineImpl for IoUring {
 		None
 	}
 
-	#[inline]
 	unsafe fn read(
-		&mut self, fd: BorrowedFd<'_>, buf: &mut [u8], offset: i64, request: RequestPtr<isize>
+		&mut self, fd: BorrowedFd<'_>, buf: &mut [u8], offset: i64, request: ReqPtr<isize>
 	) -> Option<isize> {
 		let mut op = Op::read(
 			fd.as_raw_fd(),
@@ -514,9 +495,8 @@ impl EngineImpl for IoUring {
 		None
 	}
 
-	#[inline]
 	unsafe fn write(
-		&mut self, fd: BorrowedFd<'_>, buf: &[u8], offset: i64, request: RequestPtr<isize>
+		&mut self, fd: BorrowedFd<'_>, buf: &[u8], offset: i64, request: ReqPtr<isize>
 	) -> Option<isize> {
 		let mut op = Op::write(
 			fd.as_raw_fd(),
@@ -531,9 +511,8 @@ impl EngineImpl for IoUring {
 		None
 	}
 
-	#[inline]
 	unsafe fn socket(
-		&mut self, domain: u32, socket_type: u32, protocol: u32, request: RequestPtr<isize>
+		&mut self, domain: u32, socket_type: u32, protocol: u32, request: ReqPtr<isize>
 	) -> Option<isize> {
 		let mut op = Op::socket(domain, socket_type, protocol, 0, 0);
 
@@ -542,10 +521,9 @@ impl EngineImpl for IoUring {
 		None
 	}
 
-	#[inline]
 	unsafe fn accept(
 		&mut self, socket: BorrowedFd<'_>, addr: MutPtr<()>, addrlen: &mut u32,
-		request: RequestPtr<isize>
+		request: ReqPtr<isize>
 	) -> Option<isize> {
 		let mut op = Op::accept(socket.as_raw_fd(), addr.int_addr(), addrlen, 0, 0);
 
@@ -554,9 +532,8 @@ impl EngineImpl for IoUring {
 		None
 	}
 
-	#[inline]
 	unsafe fn connect(
-		&mut self, socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32, request: RequestPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32, request: ReqPtr<isize>
 	) -> Option<isize> {
 		let mut op = Op::connect(socket.as_raw_fd(), addr.int_addr(), addrlen);
 
@@ -565,9 +542,8 @@ impl EngineImpl for IoUring {
 		None
 	}
 
-	#[inline]
 	unsafe fn recv(
-		&mut self, socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32, request: RequestPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32, request: ReqPtr<isize>
 	) -> Option<isize> {
 		let mut op = Op::recv(
 			socket.as_raw_fd(),
@@ -581,10 +557,8 @@ impl EngineImpl for IoUring {
 		None
 	}
 
-	#[inline]
 	unsafe fn recvmsg(
-		&mut self, socket: BorrowedFd<'_>, header: &mut MessageHeader, flags: u32,
-		request: RequestPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, header: &mut MsgHdr, flags: u32, request: ReqPtr<isize>
 	) -> Option<isize> {
 		let mut op = Op::recvmsg(socket.as_raw_fd(), header, flags);
 
@@ -593,9 +567,8 @@ impl EngineImpl for IoUring {
 		None
 	}
 
-	#[inline]
 	unsafe fn send(
-		&mut self, socket: BorrowedFd<'_>, buf: &[u8], flags: u32, request: RequestPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, buf: &[u8], flags: u32, request: ReqPtr<isize>
 	) -> Option<isize> {
 		let mut op = Op::send(
 			socket.as_raw_fd(),
@@ -609,10 +582,8 @@ impl EngineImpl for IoUring {
 		None
 	}
 
-	#[inline]
 	unsafe fn sendmsg(
-		&mut self, socket: BorrowedFd<'_>, header: &MessageHeader, flags: u32,
-		request: RequestPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, header: &MsgHdr, flags: u32, request: ReqPtr<isize>
 	) -> Option<isize> {
 		let mut op = Op::sendmsg(socket.as_raw_fd(), header, flags);
 
@@ -621,9 +592,8 @@ impl EngineImpl for IoUring {
 		None
 	}
 
-	#[inline]
 	unsafe fn shutdown(
-		&mut self, socket: BorrowedFd<'_>, how: Shutdown, request: RequestPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, how: Shutdown, request: ReqPtr<isize>
 	) -> Option<isize> {
 		let mut op = Op::shutdown(socket.as_raw_fd(), how);
 
@@ -632,28 +602,25 @@ impl EngineImpl for IoUring {
 		None
 	}
 
-	#[inline]
 	unsafe fn bind(
-		&mut self, socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32, _: RequestPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32, _: ReqPtr<isize>
 	) -> Option<isize> {
 		match bind_raw(socket, addr, addrlen) {
 			Ok(()) => Some(0),
-			Err(err) => Some(-err.raw_os_error().unwrap() as isize)
+			Err(err) => Some(-(err.os_error().unwrap() as isize))
 		}
 	}
 
-	#[inline]
 	unsafe fn listen(
-		&mut self, socket: BorrowedFd<'_>, backlog: i32, _: RequestPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, backlog: i32, _: ReqPtr<isize>
 	) -> Option<isize> {
 		match listen(socket, backlog) {
 			Ok(()) => Some(0),
-			Err(err) => Some(-err.raw_os_error().unwrap() as isize)
+			Err(err) => Some(-(err.os_error().unwrap() as isize))
 		}
 	}
 
-	#[inline]
-	unsafe fn fsync(&mut self, file: BorrowedFd<'_>, request: RequestPtr<isize>) -> Option<isize> {
+	unsafe fn fsync(&mut self, file: BorrowedFd<'_>, request: ReqPtr<isize>) -> Option<isize> {
 		let mut op = Op::fsync(file.as_raw_fd(), 0);
 
 		self.push_with_request(&mut op, request);
@@ -661,10 +628,8 @@ impl EngineImpl for IoUring {
 		None
 	}
 
-	#[inline]
 	unsafe fn statx(
-		&mut self, path: &CStr, flags: u32, mask: u32, statx: &mut Statx,
-		request: RequestPtr<isize>
+		&mut self, path: &CStr, flags: u32, mask: u32, statx: &mut Statx, request: ReqPtr<isize>
 	) -> Option<isize> {
 		let mut op = Op::statx(
 			OpenAt::CurrentWorkingDirectory as i32,
@@ -679,9 +644,8 @@ impl EngineImpl for IoUring {
 		None
 	}
 
-	#[inline]
 	unsafe fn poll(
-		&mut self, fd: BorrowedFd<'_>, mask: u32, request: RequestPtr<isize>
+		&mut self, fd: BorrowedFd<'_>, mask: u32, request: ReqPtr<isize>
 	) -> Option<isize> {
 		let mut op = Op::poll(fd.as_raw_fd(), mask);
 

@@ -12,7 +12,7 @@ use xx_core::{
 	error::*,
 	os::{
 		inet::Address,
-		socket::{MessageHeader, Shutdown},
+		socket::{MsgHdr, Shutdown},
 		stat::Statx
 	},
 	pointer::*
@@ -23,10 +23,10 @@ use crate::engine::Engine;
 
 macro_rules! async_engine_task {
 	($force: literal, $func: ident ($($arg: ident: $type: ty),*) -> $return_type: ty) => {
-		#[async_fn]
+		#[asynchronous]
 		#[inline(always)]
 		pub async fn $func($($arg: $type),*) -> $return_type {
-			let mut driver = internal_get_driver().await;
+			let driver = internal_get_driver().await;
 
 			if !$force {
 				check_interrupt().await?;
@@ -42,8 +42,7 @@ macro_rules! async_engine_task {
 }
 
 fn path_to_cstr(path: &Path) -> Result<CString> {
-	CString::new(path.as_os_str().as_bytes())
-		.map_err(|_| Error::new(ErrorKind::InvalidInput, "Path string contained a null byte"))
+	CString::new(path.as_os_str().as_bytes()).map_err(|_| Core::InvalidCStr.new())
 }
 
 mod internal {
@@ -62,7 +61,7 @@ mod internal {
 	async_engine_task!(false, statx(path: &CStr, flags: u32, mask: u32, statx: &mut Statx) -> Result<()>);
 }
 
-#[async_fn]
+#[asynchronous]
 pub async fn open(path: &Path, flags: u32, mode: u32) -> Result<OwnedFd> {
 	let path = path_to_cstr(path)?;
 
@@ -76,7 +75,7 @@ async_engine_task!(false, socket(domain: u32, socket_type: u32, protocol: u32) -
 
 use internal::accept as accept_raw;
 
-#[async_fn]
+#[asynchronous]
 pub async fn accept<A>(socket: BorrowedFd<'_>, addr: &mut A) -> Result<(OwnedFd, u32)> {
 	let mut addrlen = size_of::<A>() as u32;
 	let fd = accept_raw(socket, MutPtr::from(addr).as_unit(), &mut addrlen).await?;
@@ -86,12 +85,12 @@ pub async fn accept<A>(socket: BorrowedFd<'_>, addr: &mut A) -> Result<(OwnedFd,
 
 use internal::connect as connect_raw;
 
-#[async_fn]
+#[asynchronous]
 pub async fn connect<A>(socket: BorrowedFd<'_>, addr: &A) -> Result<()> {
 	connect_raw(socket, Ptr::from(addr).as_unit(), size_of::<A>() as u32).await
 }
 
-#[async_fn]
+#[asynchronous]
 pub async fn connect_addr(socket: BorrowedFd<'_>, addr: &Address) -> Result<()> {
 	match &addr {
 		Address::V4(addr) => connect(socket, addr).await,
@@ -99,7 +98,7 @@ pub async fn connect_addr(socket: BorrowedFd<'_>, addr: &Address) -> Result<()> 
 	}
 }
 
-#[async_fn]
+#[asynchronous]
 pub async fn bind_addr(socket: BorrowedFd<'_>, addr: &Address) -> Result<()> {
 	match &addr {
 		Address::V4(addr) => bind(socket, addr).await,
@@ -110,18 +109,18 @@ pub async fn bind_addr(socket: BorrowedFd<'_>, addr: &Address) -> Result<()> {
 async_engine_task!(false, recv(socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32) -> Result<usize>);
 
 async_engine_task!(false, recvmsg(
-	socket: BorrowedFd<'_>, header: &mut MessageHeader<'_>, flags: u32
+	socket: BorrowedFd<'_>, header: &mut MsgHdr, flags: u32
 ) -> Result<usize>);
 
 async_engine_task!(false, send(socket: BorrowedFd<'_>, buf: &[u8], flags: u32) -> Result<usize>);
 
-async_engine_task!(false, sendmsg(socket: BorrowedFd<'_>, header: &MessageHeader, flags: u32) -> Result<usize>);
+async_engine_task!(false, sendmsg(socket: BorrowedFd<'_>, header: &MsgHdr, flags: u32) -> Result<usize>);
 
 async_engine_task!(false, shutdown(socket: BorrowedFd<'_>, how: Shutdown) -> Result<()>);
 
 use internal::bind as bind_raw;
 
-#[async_fn]
+#[asynchronous]
 pub async fn bind<A>(socket: BorrowedFd<'_>, addr: &A) -> Result<()> {
 	bind_raw(socket, Ptr::from(addr).as_unit(), size_of::<A>() as u32).await
 }
@@ -130,7 +129,7 @@ async_engine_task!(false, listen(socket: BorrowedFd<'_>, backlog: i32) -> Result
 
 async_engine_task!(false, fsync(file: BorrowedFd<'_>) -> Result<()>);
 
-#[async_fn]
+#[asynchronous]
 pub async fn statx(path: &Path, flags: u32, mask: u32, statx: &mut Statx) -> Result<()> {
 	let path = path_to_cstr(path)?;
 

@@ -1,16 +1,16 @@
 use std::{
 	collections::BTreeSet,
 	ffi::CStr,
-	os::fd::{BorrowedFd, OwnedFd},
-	time::Duration
+	os::fd::{BorrowedFd, OwnedFd}
 };
 
 use enumflags2::*;
 use xx_core::{
 	error::*,
+	macros::{compact_error, duration},
 	opt::hint::*,
 	os::{
-		socket::{MessageHeader, Shutdown},
+		socket::{MsgHdr, Shutdown},
 		stat::Statx,
 		time::{self, ClockId}
 	},
@@ -19,12 +19,6 @@ use xx_core::{
 };
 
 use super::engine::Engine;
-
-pub struct Driver {
-	io_engine: Engine,
-	timers: BTreeSet<Timeout>,
-	exiting: bool
-}
 
 #[bitflags]
 #[repr(u32)]
@@ -36,19 +30,34 @@ pub enum TimeoutFlag {
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct Timeout {
 	expire: u64,
-	request: RequestPtr<Result<()>>
+	request: ReqPtr<Result<()>>
 }
 
-fn driver_shutdown_error() -> Error {
-	Error::new(ErrorKind::Other, "Driver is shutting down")
+#[compact_error]
+pub enum DriverError {
+	Shutdown       = (ErrorKind::Other, "Driver is shutting down"),
+	TimerCancelled = (ErrorKind::Interrupted, "Timer cancelled"),
+	TimerNotFound  = (ErrorKind::NotFound, "Timer not found")
+}
+
+struct DriverInner {
+	io_engine: Engine,
+	timers: BTreeSet<Timeout>,
+	exiting: bool
+}
+
+pub struct Driver {
+	inner: UnsafeCell<DriverInner>
 }
 
 impl Driver {
 	pub fn new() -> Result<Self> {
 		Ok(Self {
-			timers: BTreeSet::new(),
-			io_engine: Engine::new()?,
-			exiting: false
+			inner: UnsafeCell::new(DriverInner {
+				timers: BTreeSet::new(),
+				io_engine: Engine::new()?,
+				exiting: false
+			})
 		})
 	}
 
@@ -59,43 +68,39 @@ impl Driver {
 
 	#[inline(always)]
 	fn timer_complete(timeout: Timeout, result: Result<()>) {
-		Request::complete(timeout.request, result);
+		unsafe { Request::complete(timeout.request, result) };
 	}
 
 	#[inline(always)]
-	fn expire_first_timer(&mut self, result: Result<()>) {
-		let timeout = self.timers.pop_first().unwrap();
+	fn expire_first_timer(timers: &mut BTreeSet<Timeout>, result: Result<()>) {
+		let timeout = timers.pop_first().unwrap();
 
 		Self::timer_complete(timeout, result);
 	}
 
-	fn queue_timer(&mut self, timer: Timeout) {
-		self.timers.insert(timer);
+	fn queue_timer(&self, timer: Timeout) {
+		self.inner.as_mut().timers.insert(timer);
 	}
 
-	fn cancel_timer(&mut self, timer: Timeout) -> Result<()> {
-		let timeout = match self.timers.take(&timer) {
+	fn cancel_timer(&self, timer: Timeout) -> Result<()> {
+		let timeout = match self.inner.as_mut().timers.take(&timer) {
 			Some(timeout) => timeout,
-			None => return Err(Error::new(ErrorKind::NotFound, "Timer not found"))
+			None => return Err(DriverError::TimerNotFound.new())
 		};
 
-		Self::timer_complete(
-			timeout,
-			Err(Error::new(ErrorKind::Interrupted, "Timer cancelled"))
-		);
+		Self::timer_complete(timeout, Err(DriverError::TimerCancelled.new()));
 
 		Ok(())
 	}
 
-	#[sync_task]
-	#[inline(always)]
-	pub fn timeout(&mut self, mut expire: u64, flags: BitFlags<TimeoutFlag>) -> Result<()> {
-		fn cancel(self: &mut Self, expire: u64) -> Result<()> {
+	#[future]
+	pub fn timeout(&self, mut expire: u64, flags: BitFlags<TimeoutFlag>) -> Result<()> {
+		fn cancel(self: &Self, expire: u64) -> Result<()> {
 			self.cancel_timer(Timeout { expire, request })
 		}
 
-		if unlikely(self.exiting) {
-			return Progress::Done(Err(driver_shutdown_error()));
+		if unlikely(self.inner.as_ref().exiting) {
+			return Progress::Done(Err(DriverError::Shutdown.new()));
 		}
 
 		if !flags.intersects(TimeoutFlag::Abs) {
@@ -108,17 +113,14 @@ impl Driver {
 	}
 
 	#[inline(always)]
-	pub fn run_timers(&mut self) -> u64 {
-		let mut this = Handle::from(self);
-		let mut timeout = Duration::from_secs(3600).as_nanos() as u64;
+	pub fn run_timers(&self) -> u64 {
+		let mut timeout = duration!(1 h).as_nanos() as u64;
 		let mut now = Self::now();
 		let mut ran = false;
 
 		loop {
-			/* Safety: we are guaranteed unique access to self until expire_first_timer
-			 * returns */
-			let this = this.as_mut();
-			let timer = match this.timers.first() {
+			let timers = &mut self.inner.as_mut().timers;
+			let timer = match timers.first() {
 				None => break,
 				Some(timer) => timer
 			};
@@ -134,69 +136,67 @@ impl Driver {
 			}
 
 			ran = true;
-			this.expire_first_timer(Ok(()));
+
+			Self::expire_first_timer(timers, Ok(()));
 		}
 
 		timeout
 	}
 
 	#[inline(always)]
-	pub fn park(&mut self, timeout: u64) -> Result<()> {
-		let mut this = Handle::from(self);
-
-		this.io_engine.work(timeout)
+	pub fn park(&self, timeout: u64) -> Result<()> {
+		self.inner.as_mut().io_engine.work(timeout)
 	}
 
-	pub fn exit(&mut self) -> Result<()> {
-		let mut this = Handle::from(self);
-
-		this.exiting = true;
+	pub fn exit(&self) -> Result<()> {
+		self.inner.as_mut().exiting = true;
 
 		loop {
-			let this = this.as_mut();
+			let timers = &mut self.inner.as_mut().timers;
 
-			if this.timers.first().is_none() {
+			if timers.is_empty() {
 				break;
 			}
 
-			this.expire_first_timer(Err(driver_shutdown_error()))
+			Self::expire_first_timer(timers, Err(DriverError::Shutdown.new()))
 		}
 
 		loop {
-			let timeout = this.run_timers();
-			let this = this.as_mut();
+			let timeout = self.run_timers();
+			let engine = &mut self.inner.as_mut().io_engine;
 
-			if !this.io_engine.has_work() {
+			if !engine.has_work() {
 				break;
 			}
 
-			this.io_engine.work(timeout)?;
+			engine.work(timeout)?;
 		}
 
-		this.exiting = false;
+		self.inner.as_mut().exiting = false;
 
 		Ok(())
 	}
 
+	#[inline(always)]
 	pub fn check_exiting(&self) -> Result<()> {
-		if likely(!self.exiting) {
+		if likely(!self.inner.as_ref().exiting) {
 			Ok(())
 		} else {
-			Err(driver_shutdown_error())
+			Err(DriverError::Shutdown.new())
 		}
 	}
 }
 
 macro_rules! alias_func {
 	($func: ident ($($arg: ident: $type: ty),*)) => {
-		#[sync_task]
-		pub unsafe fn $func(&mut self, $($arg: $type),*) -> isize {
+		#[future]
+		pub unsafe fn $func(&self, $($arg: $type),*) -> isize {
 			fn cancel(self: &mut Engine) -> Result<()> {
 				/* use this fn to generate the cancel closure type */
 				Ok(())
 			}
 
-			self.io_engine.$func($($arg),*).run(request)
+			self.inner.as_mut().io_engine.$func($($arg),*).run(request)
 		}
 	}
 }
@@ -218,11 +218,11 @@ impl Driver {
 
 	alias_func!(recv(socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32));
 
-	alias_func!(recvmsg(socket: BorrowedFd<'_>, header: &mut MessageHeader<'_>, flags: u32));
+	alias_func!(recvmsg(socket: BorrowedFd<'_>, header: &mut MsgHdr, flags: u32));
 
 	alias_func!(send(socket: BorrowedFd<'_>, buf: &[u8], flags: u32));
 
-	alias_func!(sendmsg(socket: BorrowedFd<'_>, header: &MessageHeader, flags: u32));
+	alias_func!(sendmsg(socket: BorrowedFd<'_>, header: &MsgHdr, flags: u32));
 
 	alias_func!(shutdown(socket: BorrowedFd<'_>, how: Shutdown));
 
@@ -236,5 +236,3 @@ impl Driver {
 
 	alias_func!(poll(fd: BorrowedFd<'_>, mask: u32));
 }
-
-impl Global for Driver {}

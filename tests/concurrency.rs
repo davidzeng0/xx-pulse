@@ -2,29 +2,29 @@ use std::{io::Result, time::Duration};
 
 use xx_pulse::*;
 
-#[async_fn]
+#[asynchronous]
 async fn sync_complete() -> Result<i32> {
 	Ok(23)
 }
 
-#[async_fn]
+#[asynchronous]
 async fn async_complete() -> Result<i32> {
 	sleep(Duration::from_secs(5)).await?;
 
 	Ok(23)
 }
 
-#[async_fn]
+#[asynchronous]
 async fn spawn_sync() -> Result<i32> {
 	spawn(sync_complete()).await.await
 }
 
-#[async_fn]
+#[asynchronous]
 async fn spawn_async() -> Result<i32> {
 	spawn(async_complete()).await.await
 }
 
-#[async_fn]
+#[asynchronous]
 async fn sync_finish_await() -> Result<()> {
 	let result = spawn(sync_complete()).await;
 	let result = result.await?;
@@ -34,14 +34,14 @@ async fn sync_finish_await() -> Result<()> {
 	Ok(())
 }
 
-#[async_fn]
+#[asynchronous]
 async fn sync_finish_drop() -> Result<()> {
 	spawn(sync_complete()).await;
 
 	Ok(())
 }
 
-#[async_fn]
+#[asynchronous]
 async fn async_finish_await() -> Result<()> {
 	let result = spawn(async_complete()).await;
 	let result = result.await?;
@@ -51,21 +51,21 @@ async fn async_finish_await() -> Result<()> {
 	Ok(())
 }
 
-#[async_fn]
+#[asynchronous]
 async fn async_finish_drop() -> Result<()> {
 	spawn(async_complete()).await;
 
 	Ok(())
 }
 
-#[async_fn]
+#[asynchronous]
 async fn do_sleep() -> Result<i32> {
 	sleep(Duration::from_secs(1)).await?;
 
 	Ok(-20)
 }
 
-#[async_fn]
+#[asynchronous]
 async fn async_cancel() -> Result<()> {
 	let result = select(spawn(async_complete()).await, do_sleep()).await;
 

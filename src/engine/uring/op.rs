@@ -6,7 +6,7 @@ use xx_core::{
 };
 
 fn new_op(op: OpCode) -> SubmissionEntry {
-	let mut entry = SubmissionEntry::new();
+	let mut entry = SubmissionEntry::default();
 
 	entry.op = op;
 	entry
@@ -435,7 +435,7 @@ impl Op {
 			&mut entry,
 			path,
 			Ptr::from(name.as_ptr()).int_addr(),
-			Ptr::from(value.as_ptr()).make_mut().int_addr(),
+			Ptr::from(value.as_ptr()).cast_mut().int_addr(),
 			len,
 			flags
 		);
@@ -547,7 +547,7 @@ impl Op {
 		entry
 	}
 
-	pub fn recvmsg(fd: i32, msg: &mut MessageHeader, flags: u32) -> SubmissionEntry {
+	pub fn recvmsg(fd: i32, msg: &mut MsgHdr, flags: u32) -> SubmissionEntry {
 		let mut entry = new_op(OpCode::RecvMsg);
 
 		socket_rw(&mut entry, fd, MutPtr::from(msg).int_addr(), 1, flags);
@@ -555,7 +555,7 @@ impl Op {
 		entry
 	}
 
-	pub fn sendmsg(fd: i32, msg: &MessageHeader, flags: u32) -> SubmissionEntry {
+	pub fn sendmsg(fd: i32, msg: &MsgHdr, flags: u32) -> SubmissionEntry {
 		let mut entry = new_op(OpCode::SendMsg);
 
 		socket_rw(&mut entry, fd, Ptr::from(msg).int_addr(), 1, flags);

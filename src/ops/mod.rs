@@ -1,4 +1,8 @@
-use xx_core::error::*;
+use xx_core::{
+	coroutines::{block_on, check_interrupt, get_context, Task},
+	error::*,
+	pointer::*
+};
 
 use crate::{driver::Driver, *};
 
@@ -13,16 +17,15 @@ pub use join::*;
 pub use select::*;
 pub use spawn::*;
 pub use timers::*;
-use xx_core::coroutines::block_on;
 pub use xx_core::coroutines::{Join, JoinHandle, Select};
 
-#[async_fn]
-async fn internal_get_runtime_context() -> Handle<RuntimeContext> {
+#[asynchronous]
+async fn internal_get_runtime_context() -> Ptr<Pulse> {
 	get_context()
 		.await
-		.get_runtime::<RuntimeContext>()
+		.get_runtime::<Pulse>()
 		.ok_or_else(|| {
-			Error::new(
+			Error::simple(
 				ErrorKind::Other,
 				"Cannot use xx-pulse functions with a different runtime"
 			)
@@ -30,7 +33,7 @@ async fn internal_get_runtime_context() -> Handle<RuntimeContext> {
 		.unwrap()
 }
 
-#[async_fn]
-async fn internal_get_driver() -> Handle<Driver> {
+#[asynchronous]
+async fn internal_get_driver() -> Ptr<Driver> {
 	internal_get_runtime_context().await.driver()
 }

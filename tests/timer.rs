@@ -21,7 +21,7 @@ async fn test_timers() -> Result<()> {
 	Ok(())
 }
 
-#[async_fn]
+#[asynchronous]
 async fn async_add(a: i32, b: i32) -> i32 {
 	sleep(Duration::from_secs(1)).await.unwrap();
 
