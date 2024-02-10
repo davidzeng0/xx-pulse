@@ -24,7 +24,7 @@ jobs:
       run: cargo build --verbose
     - name: Run tests
       run: |
-        cargo test --verbose
-        cargo test --verbose --release
-        cargo valgrind test --verbose
-        cargo valgrind test --verbose --release
+        cargo test --verbose -- --nocapture
+        cargo test --verbose --release --nocapture
+        cargo valgrind test --verbose --nocapture
+        cargo valgrind test --verbose --release --nocapture
