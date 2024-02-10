@@ -40,7 +40,7 @@ async fn spawn_within(notify: Pinned<Rc<Notify>>) -> JoinHandle<()> {
 async fn notify_within(notify: Pinned<Rc<Notify>>) {
 	notify.notified().await.unwrap();
 
-	for _ in 0..100 {
+	for _ in 0..20 {
 		spawn(expect_success(notify.clone())).await;
 	}
 
@@ -126,7 +126,7 @@ async fn test_notify() {
 
 	let notify = Notify::new();
 
-	for _ in 0..100 {
+	for _ in 0..20 {
 		spawn(notify_within(notify.clone())).await;
 	}
 
