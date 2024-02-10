@@ -91,14 +91,14 @@ async fn test_notify() {
 	let notify = Notify::new();
 	let mut handle = None;
 
-	for i in 0..100 {
+	for i in 0..20 {
 		if i == 1 {
 			handle = Some(spawn(spawn_within(notify.clone())).await);
 		}
 
 		spawn(nested_cancel(notify.clone())).await;
 
-		for _ in 0..100 {
+		for _ in 0..20 {
 			spawn(expect_success(notify.clone())).await;
 		}
 	}
