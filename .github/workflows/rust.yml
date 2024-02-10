@@ -26,5 +26,5 @@ jobs:
       run: |
         RUST_BACKTRACE=1 cargo test --verbose -- --nocapture
         RUST_BACKTRACE=1 cargo test --verbose --release -- --nocapture
-        RUST_BACKTRACE=1 cargo valgrind test --verbose -- --nocapture
-        RUST_BACKTRACE=1 cargo valgrind test --verbose --release -- --nocapture
+        RUST_BACKTRACE=1 strace -f cargo valgrind test --verbose -- --nocapture
+        RUST_BACKTRACE=1 strace -f cargo valgrind test --verbose --release -- --nocapture
