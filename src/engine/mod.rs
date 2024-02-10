@@ -5,9 +5,9 @@ use std::{
 
 use xx_core::{
 	error::Result,
+	future::*,
 	os::{error::result_from_int, socket::*, stat::Statx},
-	pointer::*,
-	task::*
+	pointer::*
 };
 
 use self::uring::IoUring;

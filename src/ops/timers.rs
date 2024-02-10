@@ -8,8 +8,10 @@ use crate::driver::TimeoutFlag;
 
 #[asynchronous]
 pub async fn timeout(expire: u64, flags: BitFlags<TimeoutFlag>) -> Result<()> {
+	let driver = unsafe { internal_get_driver().await.as_ref() };
+
 	check_interrupt().await?;
-	block_on(internal_get_driver().await.timeout(expire, flags)).await
+	block_on(driver.timeout(expire, flags)).await
 }
 
 #[asynchronous]

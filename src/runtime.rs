@@ -1,6 +1,6 @@
 use xx_core::{
-	container_of, coroutines::*, error::*, fiber::*, opt::hint::*, pointer::*,
-	task::block_on::block_on as sync_block_on
+	container_of, coroutines::*, error::*, fiber::*, future::block_on::block_on as sync_block_on,
+	opt::hint::*, pointer::*
 };
 
 use crate::driver::Driver;
@@ -33,7 +33,7 @@ impl Environment for Pulse {
 	}
 
 	fn from_context(context: &Context) -> Ptr<Self> {
-		unsafe { container_of!(Ptr::from(context), Pulse, context) }.cast_const()
+		unsafe { container_of!(Ptr::from(context), Pulse:context) }.cast_const()
 	}
 
 	unsafe fn clone(&self, worker: Ptr<Worker>) -> Self {
@@ -72,25 +72,24 @@ impl Runtime {
 			)
 		};
 
-		let mut running = true;
-		let running = MutPtr::from(&mut running);
+		let running = UnsafeCell::new(true);
 
 		sync_block_on(
-			move |_| loop {
-				let timeout = driver.run_timers();
+			|_| loop {
+				let timeout = self.driver.run_timers();
 
-				if unlikely(!*running) {
+				if unlikely(!*running.as_ref()) {
 					break;
 				}
 
-				driver.park(timeout).unwrap();
+				self.driver.park(timeout).unwrap();
 
-				if unlikely(!*running) {
+				if unlikely(!*running.as_ref()) {
 					break;
 				}
 			},
 			|| {
-				*(running.clone()) = false;
+				*running.as_mut() = false;
 			},
 			task
 		)

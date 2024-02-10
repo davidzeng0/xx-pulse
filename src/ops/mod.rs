@@ -21,8 +21,7 @@ pub use xx_core::coroutines::{Join, JoinHandle, Select};
 
 #[asynchronous]
 async fn internal_get_runtime_context() -> Ptr<Pulse> {
-	get_context()
-		.await
+	unsafe { get_context().await.as_ref() }
 		.get_runtime::<Pulse>()
 		.ok_or_else(|| {
 			Error::simple(
@@ -35,5 +34,5 @@ async fn internal_get_runtime_context() -> Ptr<Pulse> {
 
 #[asynchronous]
 async fn internal_get_driver() -> Ptr<Driver> {
-	internal_get_runtime_context().await.driver()
+	unsafe { internal_get_runtime_context().await.as_ref() }.driver()
 }

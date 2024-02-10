@@ -26,7 +26,7 @@ macro_rules! async_engine_task {
 		#[asynchronous]
 		#[inline(always)]
 		pub async fn $func($($arg: $type),*) -> $return_type {
-			let driver = internal_get_driver().await;
+			let driver = unsafe { internal_get_driver().await.as_ref() };
 
 			if !$force {
 				check_interrupt().await?;

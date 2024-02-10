@@ -5,7 +5,7 @@ use std::{
 
 use enumflags2::BitFlags;
 use xx_core::{
-	coroutines::Task,
+	impls::AsyncFn1,
 	macros::wrapper_functions,
 	os::{inet::*, poll::PollFlag, socket::*},
 	pointer::*,
@@ -15,12 +15,7 @@ use xx_core::{
 use super::*;
 
 #[asynchronous]
-async fn foreach_addr<
-	A: ToSocketAddrs,
-	F: Fn(Address) -> T,
-	Output,
-	T: Task<Output = Result<Output>>
->(
+async fn foreach_addr<A: ToSocketAddrs, F: AsyncFn1<Address, Output = Result<Output>>, Output>(
 	addrs: A, f: F
 ) -> Result<Output> {
 	let mut error = None;

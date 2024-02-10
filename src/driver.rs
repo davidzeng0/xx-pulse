@@ -7,15 +7,15 @@ use std::{
 use enumflags2::*;
 use xx_core::{
 	error::*,
-	macros::{compact_error, duration},
+	future::*,
+	macros::duration,
 	opt::hint::*,
 	os::{
 		socket::{MsgHdr, Shutdown},
 		stat::Statx,
 		time::{self, ClockId}
 	},
-	pointer::*,
-	task::*
+	pointer::*
 };
 
 use super::engine::Engine;

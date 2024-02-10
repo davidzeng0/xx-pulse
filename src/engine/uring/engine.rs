@@ -9,10 +9,10 @@ use std::{
 use enumflags2::{make_bitflags, BitFlags};
 use xx_core::{
 	error::*,
+	future::*,
 	opt::hint::*,
 	os::{error::*, io_uring::*, mman::*, openat::*, socket::*, stat::*},
 	pointer::*,
-	task::*,
 	trace
 };
 
