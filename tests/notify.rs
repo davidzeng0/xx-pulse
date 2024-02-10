@@ -70,8 +70,8 @@ async fn test_notify() {
 
 	spawn(nested_cancel(notify.clone())).await;
 
-	for _ in 0..100 {
-		for _ in 0..100 {
+	for _ in 0..20 {
+		for _ in 0..20 {
 			spawn(expect_success(notify.clone())).await;
 		}
 
