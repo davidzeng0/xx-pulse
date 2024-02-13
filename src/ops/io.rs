@@ -12,7 +12,7 @@ use xx_core::{
 	error::*,
 	os::{
 		inet::Address,
-		socket::{MsgHdr, Shutdown},
+		socket::{MessageHeader, MessageHeaderMut, Shutdown},
 		stat::Statx
 	},
 	pointer::*
@@ -109,12 +109,12 @@ pub async fn bind_addr(socket: BorrowedFd<'_>, addr: &Address) -> Result<()> {
 async_engine_task!(false, recv(socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32) -> Result<usize>);
 
 async_engine_task!(false, recvmsg(
-	socket: BorrowedFd<'_>, header: &mut MsgHdr, flags: u32
+	socket: BorrowedFd<'_>, header: &mut MessageHeaderMut<'_>, flags: u32
 ) -> Result<usize>);
 
 async_engine_task!(false, send(socket: BorrowedFd<'_>, buf: &[u8], flags: u32) -> Result<usize>);
 
-async_engine_task!(false, sendmsg(socket: BorrowedFd<'_>, header: &MsgHdr, flags: u32) -> Result<usize>);
+async_engine_task!(false, sendmsg(socket: BorrowedFd<'_>, header: &MessageHeader<'_>, flags: u32) -> Result<usize>);
 
 async_engine_task!(false, shutdown(socket: BorrowedFd<'_>, how: Shutdown) -> Result<()>);
 

@@ -11,7 +11,7 @@ use xx_core::{
 	macros::duration,
 	opt::hint::*,
 	os::{
-		socket::{MsgHdr, Shutdown},
+		socket::{MessageHeader, MessageHeaderMut, Shutdown},
 		stat::Statx,
 		time::{self, ClockId}
 	},
@@ -79,11 +79,11 @@ impl Driver {
 	}
 
 	fn queue_timer(&self, timer: Timeout) {
-		self.inner.as_mut().timers.insert(timer);
+		unsafe { self.inner.as_mut().timers.insert(timer) };
 	}
 
 	fn cancel_timer(&self, timer: Timeout) -> Result<()> {
-		let timeout = match self.inner.as_mut().timers.take(&timer) {
+		let timeout = match unsafe { self.inner.as_mut().timers.take(&timer) } {
 			Some(timeout) => timeout,
 			None => return Err(DriverError::TimerNotFound.new())
 		};
@@ -99,7 +99,7 @@ impl Driver {
 			self.cancel_timer(Timeout { expire, request })
 		}
 
-		if unlikely(self.inner.as_ref().exiting) {
+		if unlikely(unsafe { self.inner.as_ref().exiting }) {
 			return Progress::Done(Err(DriverError::Shutdown.new()));
 		}
 
@@ -119,7 +119,7 @@ impl Driver {
 		let mut ran = false;
 
 		loop {
-			let timers = &mut self.inner.as_mut().timers;
+			let timers = unsafe { &mut self.inner.as_mut().timers };
 			let timer = match timers.first() {
 				None => break,
 				Some(timer) => timer
@@ -145,41 +145,45 @@ impl Driver {
 
 	#[inline(always)]
 	pub fn park(&self, timeout: u64) -> Result<()> {
-		self.inner.as_mut().io_engine.work(timeout)
+		unsafe { self.inner.as_mut().io_engine.work(timeout) }
 	}
 
 	pub fn exit(&self) -> Result<()> {
-		self.inner.as_mut().exiting = true;
+		unsafe {
+			let exiting = { &mut self.inner.as_mut().exiting };
 
-		loop {
-			let timers = &mut self.inner.as_mut().timers;
+			*exiting = true;
 
-			if timers.is_empty() {
-				break;
+			loop {
+				let timers = &mut self.inner.as_mut().timers;
+
+				if timers.is_empty() {
+					break;
+				}
+
+				Self::expire_first_timer(timers, Err(DriverError::Shutdown.new()))
 			}
 
-			Self::expire_first_timer(timers, Err(DriverError::Shutdown.new()))
-		}
+			loop {
+				let timeout = self.run_timers();
+				let engine = &mut self.inner.as_mut().io_engine;
 
-		loop {
-			let timeout = self.run_timers();
-			let engine = &mut self.inner.as_mut().io_engine;
+				if !engine.has_work() {
+					break;
+				}
 
-			if !engine.has_work() {
-				break;
+				engine.work(timeout)?;
 			}
 
-			engine.work(timeout)?;
+			*exiting = false;
 		}
-
-		self.inner.as_mut().exiting = false;
 
 		Ok(())
 	}
 
 	#[inline(always)]
 	pub fn check_exiting(&self) -> Result<()> {
-		if likely(!self.inner.as_ref().exiting) {
+		if likely(!unsafe { self.inner.as_ref().exiting }) {
 			Ok(())
 		} else {
 			Err(DriverError::Shutdown.new())
@@ -218,11 +222,11 @@ impl Driver {
 
 	alias_func!(recv(socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32));
 
-	alias_func!(recvmsg(socket: BorrowedFd<'_>, header: &mut MsgHdr, flags: u32));
+	alias_func!(recvmsg(socket: BorrowedFd<'_>, header: &mut MessageHeaderMut<'_>, flags: u32));
 
 	alias_func!(send(socket: BorrowedFd<'_>, buf: &[u8], flags: u32));
 
-	alias_func!(sendmsg(socket: BorrowedFd<'_>, header: &MsgHdr, flags: u32));
+	alias_func!(sendmsg(socket: BorrowedFd<'_>, header: &MessageHeader<'_>, flags: u32));
 
 	alias_func!(shutdown(socket: BorrowedFd<'_>, how: Shutdown));
 

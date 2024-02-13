@@ -59,7 +59,8 @@ pub trait EngineImpl {
 	) -> Option<isize>;
 
 	unsafe fn recvmsg(
-		&mut self, socket: BorrowedFd<'_>, header: &mut MsgHdr, flags: u32, request: ReqPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, header: &mut MessageHeaderMut<'_>, flags: u32,
+		request: ReqPtr<isize>
 	) -> Option<isize>;
 
 	unsafe fn send(
@@ -67,7 +68,8 @@ pub trait EngineImpl {
 	) -> Option<isize>;
 
 	unsafe fn sendmsg(
-		&mut self, socket: BorrowedFd<'_>, header: &MsgHdr, flags: u32, request: ReqPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, header: &MessageHeader<'_>, flags: u32,
+		request: ReqPtr<isize>
 	) -> Option<isize>;
 
 	unsafe fn shutdown(
@@ -188,11 +190,11 @@ impl Engine {
 
 	engine_task!(recv(socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32) -> Result<usize>);
 
-	engine_task!(recvmsg(socket: BorrowedFd<'_>, header: &mut MsgHdr, flags: u32) -> Result<usize>);
+	engine_task!(recvmsg(socket: BorrowedFd<'_>, header: &mut MessageHeaderMut<'_>, flags: u32) -> Result<usize>);
 
 	engine_task!(send(socket: BorrowedFd<'_>, buf: &[u8], flags: u32) -> Result<usize>);
 
-	engine_task!(sendmsg(socket: BorrowedFd<'_>, header: &MsgHdr, flags: u32) -> Result<usize>);
+	engine_task!(sendmsg(socket: BorrowedFd<'_>, header: &MessageHeader<'_>, flags: u32) -> Result<usize>);
 
 	engine_task!(shutdown(socket: BorrowedFd<'_>, how: Shutdown) -> Result<()>);
 

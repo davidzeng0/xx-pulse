@@ -263,9 +263,27 @@ pub struct IoUring {
 	to_submit: u32
 }
 
-fn no_op(_: ReqPtr<isize>, _: Ptr<()>, _: isize) {}
+const NO_OP: Request<isize> = Request::no_op();
 
-const NO_OP: Request<isize> = Request::new(Ptr::null(), no_op);
+fn create_io_uring(params: &mut Parameters) -> Result<OwnedFd> {
+	let err = match io_uring_setup(params.sq_entries, params) {
+		Ok(fd) => return Ok(fd),
+		Err(err) => err
+	};
+
+	Err(match err.os_error().unwrap() {
+		OsError::Inval => Error::simple(
+			ErrorKind::InvalidInput,
+			"Failed to setup io_uring. This is usually because your linux kernel is outdated."
+		),
+		OsError::NoMem => Error::simple(
+			ErrorKind::InvalidInput,
+			"Failed to setup io_uring. This is usually because your locked memory limit is too \
+			 low."
+		),
+		_ => err
+	})
+}
 
 impl IoUring {
 	pub fn new() -> Result<Self> {
@@ -277,7 +295,7 @@ impl IoUring {
 			CompletionRingSize | Clamp | SubmitAll | CoopTaskrun | TaskRun | SingleIssuer | DeferTaskrun
 		}));
 
-		let ring_fd = io_uring_setup(params.sq_entries, &mut params)?;
+		let ring_fd = create_io_uring(&mut params)?;
 		let rings = Rings::new(ring_fd.as_fd(), &params)?;
 		let queue = unsafe { Queue::new(rings, params) };
 
@@ -398,22 +416,19 @@ impl IoUring {
 
 		trace!(target: self, ">> {} Completions", tail.wrapping_sub(head));
 
-		unsafe {
-			while tail != head {
-				let CompletionEntry { user_data, result, .. } =
-					*self.queue.completion.get_entry(head & mask);
+		while tail != head {
+			let CompletionEntry { user_data, result, .. } =
+				*unsafe { self.queue.completion.get_entry(head & mask) };
+			/*
+			 * more requests may be queued in callback, so
+			 * update the cqe head here so that we have one more cqe
+			 * available for completions before overflow occurs
+			 */
+			head = head.wrapping_add(1);
+			self.queue.completion.khead.store(head, Ordering::Release);
+			self.to_complete -= 1;
 
-				/*
-				 * more requests may be queued in callback, so
-				 * update the cqe head here so that we have one more cqe
-				 * available for completions before overflow occurs
-				 */
-				head = head.wrapping_add(1);
-				self.queue.completion.khead.store(head, Ordering::Release);
-				self.to_complete -= 1;
-
-				Request::complete(Ptr::from_int_addr(user_data as usize), result as isize);
-			}
+			unsafe { Request::complete(Ptr::from_int_addr(user_data as usize), result as isize) };
 		}
 	}
 
@@ -558,7 +573,8 @@ impl EngineImpl for IoUring {
 	}
 
 	unsafe fn recvmsg(
-		&mut self, socket: BorrowedFd<'_>, header: &mut MsgHdr, flags: u32, request: ReqPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, header: &mut MessageHeaderMut<'_>, flags: u32,
+		request: ReqPtr<isize>
 	) -> Option<isize> {
 		let mut op = Op::recvmsg(socket.as_raw_fd(), header, flags);
 
@@ -583,7 +599,8 @@ impl EngineImpl for IoUring {
 	}
 
 	unsafe fn sendmsg(
-		&mut self, socket: BorrowedFd<'_>, header: &MsgHdr, flags: u32, request: ReqPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, header: &MessageHeader<'_>, flags: u32,
+		request: ReqPtr<isize>
 	) -> Option<isize> {
 		let mut op = Op::sendmsg(socket.as_raw_fd(), header, flags);
 

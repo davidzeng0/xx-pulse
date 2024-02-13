@@ -547,7 +547,7 @@ impl Op {
 		entry
 	}
 
-	pub fn recvmsg(fd: i32, msg: &mut MsgHdr, flags: u32) -> SubmissionEntry {
+	pub fn recvmsg(fd: i32, msg: &mut MessageHeaderMut<'_>, flags: u32) -> SubmissionEntry {
 		let mut entry = new_op(OpCode::RecvMsg);
 
 		socket_rw(&mut entry, fd, MutPtr::from(msg).int_addr(), 1, flags);
@@ -555,7 +555,7 @@ impl Op {
 		entry
 	}
 
-	pub fn sendmsg(fd: i32, msg: &MsgHdr, flags: u32) -> SubmissionEntry {
+	pub fn sendmsg(fd: i32, msg: &MessageHeader<'_>, flags: u32) -> SubmissionEntry {
 		let mut entry = new_op(OpCode::SendMsg);
 
 		socket_rw(&mut entry, fd, Ptr::from(msg).int_addr(), 1, flags);

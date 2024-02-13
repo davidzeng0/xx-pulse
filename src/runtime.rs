@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use xx_core::{
 	container_of, coroutines::*, error::*, fiber::*, future::block_on::block_on as sync_block_on,
 	opt::hint::*, pointer::*
@@ -61,38 +63,37 @@ impl Runtime {
 	}
 
 	pub fn block_on<T: Task>(&mut self, task: T) -> T::Output {
-		let driver = Ptr::from(&self.driver);
-		let executor = Ptr::from(&self.executor);
-
 		let task = unsafe {
+			let driver = Ptr::from(&self.driver);
+			let executor = Ptr::from(&self.executor);
+
 			spawn_future(
 				executor,
-				|worker| Pulse::new(executor, driver, worker),
+				move |worker| Pulse::new(executor, driver, worker),
 				task
 			)
 		};
 
-		let running = UnsafeCell::new(true);
+		let running = Cell::new(true);
+		let block = |_| loop {
+			let timeout = self.driver.run_timers();
 
-		sync_block_on(
-			|_| loop {
-				let timeout = self.driver.run_timers();
+			if unlikely(!running.get()) {
+				break;
+			}
 
-				if unlikely(!*running.as_ref()) {
-					break;
-				}
+			self.driver.park(timeout).unwrap();
 
-				self.driver.park(timeout).unwrap();
+			if unlikely(!running.get()) {
+				break;
+			}
+		};
 
-				if unlikely(!*running.as_ref()) {
-					break;
-				}
-			},
-			|| {
-				*running.as_mut() = false;
-			},
-			task
-		)
+		let resume = || {
+			running.set(false);
+		};
+
+		unsafe { sync_block_on(block, resume, task) }
 	}
 }
 
