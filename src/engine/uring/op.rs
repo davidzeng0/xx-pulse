@@ -1,7 +1,7 @@
 use std::{ffi::CStr, mem::size_of};
 
 use xx_core::{
-	os::{epoll::*, io_uring::*, iovec::IoVec, openat2::OpenHow, socket::*, stat::Statx},
+	os::{epoll::*, io_uring::*, iovec::IoVec, openat2::OpenHow, socket::*, stat::Statx, time::*},
 	pointer::*
 };
 
@@ -264,6 +264,21 @@ impl Op {
 		let mut entry = new_op(OpCode::FileSync);
 
 		sync(&mut entry, fd, 0, 0, flags);
+
+		entry
+	}
+
+	pub fn timeout(timespec: &TimeSpec, count: u32, flags: u32) -> SubmissionEntry {
+		let mut entry = new_op(OpCode::Timeout);
+
+		rw(
+			&mut entry,
+			0,
+			Ptr::from(timespec).int_addr(),
+			1,
+			count as u64,
+			flags
+		);
 
 		entry
 	}

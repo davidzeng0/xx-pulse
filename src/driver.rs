@@ -95,6 +95,7 @@ impl Driver {
 
 	#[future]
 	pub fn timeout(&self, mut expire: u64, flags: BitFlags<TimeoutFlag>) -> Result<()> {
+		#[cancel]
 		fn cancel(self: &Self, expire: u64) -> Result<()> {
 			self.cancel_timer(Timeout { expire, request })
 		}
@@ -195,6 +196,7 @@ macro_rules! alias_func {
 	($func: ident ($($arg: ident: $type: ty),*)) => {
 		#[future]
 		pub unsafe fn $func(&self, $($arg: $type),*) -> isize {
+			#[cancel]
 			fn cancel(self: &mut Engine) -> Result<()> {
 				/* use this fn to generate the cancel closure type */
 				Ok(())

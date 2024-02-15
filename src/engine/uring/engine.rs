@@ -12,7 +12,7 @@ use xx_core::{
 	error::*,
 	future::*,
 	opt::hint::*,
-	os::{error::*, io_uring::*, mman::*, openat::*, socket::*, stat::*, unistd::close},
+	os::{error::*, io_uring::*, mman::*, openat::*, socket::*, stat::*, time::*, unistd::*},
 	pointer::*,
 	trace, warn
 };
@@ -267,106 +267,114 @@ pub struct IoUring {
 
 const NO_OP: Request<isize> = Request::no_op();
 
+fn sync_result(result: Result<isize>) -> isize {
+	match result {
+		Ok(num) => num,
+		Err(err) => -(err.os_error().unwrap() as isize)
+	}
+}
+
+fn create_io_uring() -> Result<(IoRingFeatures, OwnedFd, Parameters)> {
+	struct IoUringEngine {}
+
+	let ring = IoUringEngine {};
+
+	let features = match io_uring_detect_features()? {
+		Some(features) => features,
+		None => {
+			error!(target: &ring,
+				"Failed to setup io_uring. The current linux kernel does not support io_uring. \
+					Please upgrade the kernel to a minimum of version 5.11 (recommended >= 6.1) and try again."
+			);
+
+			return Err(Error::Os(OsError::NoSys));
+		}
+	};
+
+	let ops = [
+		(OpCode::OpenAt, Some("files"), None),
+		(OpCode::Close, None, Some("Some operations may be blocking")),
+		(OpCode::Read, Some("files"), None),
+		(OpCode::Write, Some("files"), None),
+		(OpCode::Socket, None, Some("Using syscall as fallback")),
+		(OpCode::Accept, Some("sockets"), None),
+		(OpCode::Connect, Some("sockets"), None),
+		(OpCode::Recv, Some("sockets"), None),
+		(OpCode::RecvMsg, Some("sockets"), None),
+		(OpCode::Send, Some("sockets"), None),
+		(OpCode::SendMsg, Some("sockets"), None),
+		(OpCode::Shutdown, None, Some("Using syscall as fallback")),
+		(OpCode::FileSync, Some("files"), None),
+		(OpCode::Statx, Some("files"), None),
+		(OpCode::PollAdd, None, None)
+	];
+
+	for (op, feature, message) in &ops {
+		if !features.opcode_supported(*op) {
+			let feature = feature
+				.map(|feat| format!("(like {})", feat))
+				.unwrap_or("".to_string());
+
+			warn!(
+				target: &ring,
+				"Op code `{:?}`, is not supported. {}. Linux kernel version 6.1 or greater is recommended.",
+				*op,
+				message.unwrap_or(&format!(
+					"Some features {} may not be available",
+					feature
+				))
+			);
+		}
+	}
+
+	let mut setup_flags = BitFlags::default();
+	let mut params = Parameters::default();
+
+	let flags = make_bitflags!(SetupFlag::{CompletionRingSize | Clamp | SubmitAll | CoopTaskrun | TaskRun | SingleIssuer | DeferTaskrun});
+
+	for flag in flags {
+		if features.setup_flag_supported(flag) {
+			setup_flags |= flag;
+		}
+	}
+
+	params.sq_entries = 256;
+	params.cq_entries = 65536;
+	params.set_flags(setup_flags);
+
+	if !setup_flags.intersects(SetupFlag::Clamp) {
+		params.cq_entries = 0;
+	}
+
+	if !setup_flags.contains(flags) || !features.feature_supported(Feature::ExtArg) {
+		warn!(
+			target: &ring,
+			"Running in compatibility mode on an estimated linux kernel version of {}. \
+				The preferred version is atleast 6.1. Some features may not be available. \
+				Performance may be degraded.",
+			features.version()
+		);
+	}
+
+	let err = match io_uring_setup(params.sq_entries, &mut params) {
+		Ok(fd) => return Ok((features, fd, params)),
+		Err(err) => err
+	};
+
+	match err.os_error().unwrap() {
+		OsError::NoMem => error!(target: &ring,
+			"Failed to setup io_uring. This is usually because the current locked memory limit is \
+			 too low. Please raise the limit and try again."
+		),
+		_ => ()
+	}
+
+	Err(err)
+}
+
 impl IoUring {
-	fn create_io_uring() -> Result<(IoRingFeatures, OwnedFd, Parameters)> {
-		struct IoUringInit {}
-
-		let ring = IoUringInit {};
-
-		let features = match io_uring_detect_features()? {
-			Some(features) => features,
-			None => {
-				error!(target: &ring,
-					"Failed to setup io_uring. The current linux kernel does not support io_uring. Please \
-					 upgrade the kernel to a minimum of 5.11 (recommended >= 6.1) and try again."
-				);
-
-				return Err(Error::Os(OsError::NoSys));
-			}
-		};
-
-		if !features.opcode_supported(OpCode::AsyncCancel) {
-			warn!(target: &ring, "OpCode::AsyncCancel is not supported. Async tasks may not behave properly. Please consider upgrading the linux kernel to a minimum of 5.11 (recommended >= 6.1).");
-		}
-
-		if !features.opcode_supported(OpCode::Close) {
-			warn!(target: &ring, "OpCode::Close, is not supported. Some operations may be blocking. Please consider upgrading the linux kernel to a minimum of 5.11 (recommended >= 6.1).");
-		}
-
-		if !features.opcode_supported(OpCode::OpenAt) || !features.opcode_supported(OpCode::Statx) {
-			warn!(target: &ring, "OpCode::{{OpenAt | Statx}}, is not supported. Some features (like files) may not be available. Please consider upgrading the linux kernel to a minimum of 5.11 (recommended >= 6.1).");
-		}
-
-		if !features.opcode_supported(OpCode::Read) || !features.opcode_supported(OpCode::Write) {
-			warn!(target: &ring, "OpCode::{{Read | Write}}, is not supported. Some features (like files) may not be available. Please consider upgrading the linux kernel to a minimum of 5.11 (recommended >= 6.1).");
-		}
-
-		if !features.opcode_supported(OpCode::Connect) || !features.opcode_supported(OpCode::Accept)
-		{
-			warn!(target: &ring, "OpCode::{{Connect | Accept}}, is not supported. Some features (like sockets) may not be available. Please consider upgrading the linux kernel to a minimum of 5.11 (recommended >= 6.1).");
-		}
-
-		if !features.opcode_supported(OpCode::Recv) || !features.opcode_supported(OpCode::Send) {
-			warn!(target: &ring, "OpCode::{{Recv | Send}}, is not supported. Some features (like sockets) may not be available. Please consider upgrading the linux kernel to a minimum of 5.11 (recommended >= 6.1).");
-		}
-
-		if !features.opcode_supported(OpCode::Shutdown) {
-			warn!(target: &ring, "OpCode::Shutdown, is not supported. Using syscall as fallback. Linux kernel >= 6.1 is recommended.");
-		}
-
-		if !features.opcode_supported(OpCode::Socket) {
-			warn!(target: &ring, "OpCode::Socket, is not supported. Using syscall as fallback. Linux kernel >= 6.1 is recommended.");
-		}
-
-		let mut flags = make_bitflags!(SetupFlag::{CompletionRingSize | Clamp});
-
-		let additional_flags = {
-			use SetupFlag::*;
-
-			[SubmitAll, CoopTaskrun, TaskRun, SingleIssuer, DeferTaskrun]
-		};
-
-		for flag in additional_flags {
-			if features.setup_flag_supported(flag) {
-				flags |= flag;
-			} else {
-				warn!(target: &ring, "Running in compatibility mode on an estimated linux kernel version of {}.{}. The preferred version is atleast 6.1. Some features may not be available.", features.min_ver / 100, features.min_ver % 100);
-
-				break;
-			}
-		}
-
-		let mut params = Parameters::default();
-
-		params.sq_entries = 256;
-		params.cq_entries = 65536;
-		params.set_flags(flags);
-
-		let err = match io_uring_setup(params.sq_entries, &mut params) {
-			Ok(fd) => return Ok((features, fd, params)),
-			Err(err) => err
-		};
-
-		match err.os_error().unwrap() {
-			OsError::NoMem => error!(target: &ring,
-				"Failed to setup io_uring. This is usually because the current locked memory limit is \
-				 too low. Please raise the limit and try again."
-			),
-			_ => ()
-		}
-
-		Err(err)
-	}
-
-	fn sync_result(result: Result<isize>) -> isize {
-		match result {
-			Ok(num) => num,
-			Err(err) => -(err.os_error().unwrap() as isize)
-		}
-	}
-
 	pub fn new() -> Result<Self> {
-		let (features, ring_fd, params) = Self::create_io_uring()?;
+		let (features, ring_fd, params) = create_io_uring()?;
 		let rings = Rings::new(ring_fd.as_fd(), &params)?;
 		let queue = unsafe { Queue::new(rings, params) };
 
@@ -379,6 +387,22 @@ impl IoUring {
 		})
 	}
 
+	#[inline(never)]
+	fn enter_cold(&mut self, err: Option<Error>) -> Result<()> {
+		let err = match err {
+			None => return Err(Core::OutOfMemory.new()),
+			Some(err) => err.os_error().unwrap()
+		};
+
+		match err {
+			OsError::Time | OsError::Intr | OsError::Busy if self.to_submit == 0 => return Ok(()),
+			OsError::Again => return Err(Core::OutOfMemory.new()),
+			_ => ()
+		}
+
+		Err(Error::Os(err))
+	}
+
 	#[inline(always)]
 	fn enter<F: Fn(&mut Self) -> Result<i32>>(&mut self, f: F) -> Result<()> {
 		self.queue.submission.sync();
@@ -388,49 +412,26 @@ impl IoUring {
 		}
 
 		loop {
-			let submitted = match f(self) {
-				Ok(count) => count,
-				Err(err) => match err.os_error().unwrap()  {
-					/* no memory to submit all */
-					OsError::Again => -1,
+			let err = match f(self) {
+				Ok(submitted) => {
+					self.to_submit -= submitted as u32;
+					self.to_complete += submitted as u64;
 
-					OsError::Time |
-					OsError::Intr |
-					/* cq overflowed */
-					OsError::Busy => {
-						if self.to_submit == 0 {
-							return Ok(());
-						}
-
-						-1
+					if likely(self.to_submit == 0) {
+						break;
 					}
 
-					_ => {
-						return Err(err);
+					if likely(!self.features.setup_flag_supported(SetupFlag::SubmitAll)) {
+						continue;
 					}
+
+					None
 				}
+
+				Err(err) => Some(err)
 			};
 
-			if self.to_submit != 0 {
-				if unlikely(submitted != self.to_submit as i32) {
-					if self.features.setup_flag_supported(SetupFlag::SubmitAll) {
-						return Err(Error::simple(
-							ErrorKind::OutOfMemory,
-							format!("Submitted {} / {}", submitted, self.to_submit)
-						));
-					}
-
-					if submitted > 0 {
-						self.to_submit -= submitted as u32;
-						self.to_complete += submitted as u64;
-					}
-
-					continue;
-				}
-
-				self.to_submit = 0;
-				self.to_complete += submitted as u64;
-			}
+			self.enter_cold(err)?;
 
 			break;
 		}
@@ -448,24 +449,55 @@ impl IoUring {
 		}
 
 		self.enter(|this| unsafe {
-			io_uring_enter2(
+			io_uring_enter(
 				this.ring_fd.as_fd(),
 				this.to_submit,
 				0,
 				flags.bits(),
-				MutPtr::null(),
-				SIGSET_SIZE
+				MutPtr::null()
 			)
 		})
 	}
 
+	/// Compatibility function
+	#[inline(never)]
+	fn enter_timeout(&mut self, timeout: u64) -> Result<()> {
+		let tail = self.queue.completion.read_ring().1;
+
+		self.flush()?;
+
+		/* some requests may have completed from `flush()`, if there are no
+		 * completions, our timeout might hang. if we received events, there is no
+		 * need to timeout anyway */
+		if self.queue.completion.read_ring().1 != tail {
+			return Ok(());
+		}
+
+		let ts = TimeSpec { nanos: timeout as i64, sec: 0 };
+		let mut op = Op::timeout(&ts, 1, 0);
+
+		self.push_with_request(&mut op, Ptr::from(&NO_OP));
+		self.enter(|this| unsafe {
+			io_uring_enter(
+				this.ring_fd.as_fd(),
+				this.to_submit,
+				1,
+				EnterFlag::GetEvents as u32,
+				MutPtr::null()
+			)
+		})
+		.unwrap();
+
+		/* the kernel received our timeout, we can safely release `ts` */
+		Ok(())
+	}
+
 	fn submit_and_wait(&mut self, timeout: u64) -> Result<(u32, u32)> {
-		let flags = make_bitflags!(EnterFlag::{GetEvents});
 		let mut wait = 0;
 
 		if likely(timeout != 0) {
 			wait = 1;
-		} else if self.to_submit == 0 {
+		} else if unlikely(self.to_submit == 0) {
 			let ring = self.queue.completion.read_ring();
 
 			if ring.0 != ring.1 {
@@ -479,32 +511,36 @@ impl IoUring {
 			}
 		}
 
-		self.enter(|this| unsafe {
-			/*
-			 * the kernel doesn't read the timespec until it's actually time to wait for
-			 * cqes avoid loss due to branching here and set EXT_ARG on every enter
-			 */
-			io_uring_enter_timeout(
-				this.ring_fd.as_fd(),
-				this.to_submit,
-				wait,
-				flags.bits(),
-				timeout
-			)
-		})?;
+		if likely(self.features.feature_supported(Feature::ExtArg)) {
+			self.enter(|this| unsafe {
+				/*
+				 * the kernel doesn't read the timespec until it's actually time to wait for
+				 * cqes. avoid loss due to branching here and set EXT_ARG on every enter
+				 */
+				io_uring_enter_timeout(
+					this.ring_fd.as_fd(),
+					this.to_submit,
+					wait,
+					EnterFlag::GetEvents as u32,
+					timeout
+				)
+			})?;
+		} else {
+			self.enter_timeout(timeout)?;
+		}
 
 		Ok(self.queue.completion.read_ring())
 	}
 
 	#[inline(always)]
 	fn run_events(&mut self, (mut head, tail): (u32, u32)) {
-		if tail == head {
-			return;
-		}
-
 		let mask = self.queue.completion.mask;
 
-		trace!(target: self, ">> {} Completions", tail.wrapping_sub(head));
+		if tail != head {
+			trace!(target: self, ">> {} Completions", tail.wrapping_sub(head));
+		}
+
+		self.to_complete -= tail.wrapping_sub(head) as u64;
 
 		while tail != head {
 			let CompletionEntry { user_data, result, .. } =
@@ -516,7 +552,6 @@ impl IoUring {
 			 */
 			head = head.wrapping_add(1);
 			self.queue.completion.khead.store(head, Ordering::Release);
-			self.to_complete -= 1;
 
 			unsafe { Request::complete(Ptr::from_int_addr(user_data as usize), result as isize) };
 		}
@@ -576,7 +611,7 @@ impl EngineImpl for IoUring {
 
 	unsafe fn close(&mut self, fd: OwnedFd, request: ReqPtr<isize>) -> Option<isize> {
 		if unlikely(!self.features.opcode_supported(OpCode::Close)) {
-			return Some(Self::sync_result(close(fd).map(|_| 0)));
+			return Some(sync_result(close(fd).map(|_| 0)));
 		}
 
 		/* into is safe here because push panics if out of memory, and we don't
@@ -624,7 +659,7 @@ impl EngineImpl for IoUring {
 		&mut self, domain: u32, socket_type: u32, protocol: u32, request: ReqPtr<isize>
 	) -> Option<isize> {
 		if unlikely(!self.features.opcode_supported(OpCode::Socket)) {
-			return Some(Self::sync_result(
+			return Some(sync_result(
 				socket(domain, socket_type, protocol).map(|fd| fd.into_raw_fd() as isize)
 			));
 		}
@@ -713,7 +748,7 @@ impl EngineImpl for IoUring {
 		&mut self, socket: BorrowedFd<'_>, how: Shutdown, request: ReqPtr<isize>
 	) -> Option<isize> {
 		if unlikely(!self.features.opcode_supported(OpCode::Shutdown)) {
-			return Some(Self::sync_result(shutdown(socket, how).map(|_| 0)));
+			return Some(sync_result(shutdown(socket, how).map(|_| 0)));
 		}
 
 		let mut op = Op::shutdown(socket.as_raw_fd(), how);
@@ -726,15 +761,13 @@ impl EngineImpl for IoUring {
 	unsafe fn bind(
 		&mut self, socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32, _: ReqPtr<isize>
 	) -> Option<isize> {
-		Some(Self::sync_result(
-			bind_raw(socket, addr, addrlen).map(|_| 0)
-		))
+		Some(sync_result(bind_raw(socket, addr, addrlen).map(|_| 0)))
 	}
 
 	unsafe fn listen(
 		&mut self, socket: BorrowedFd<'_>, backlog: i32, _: ReqPtr<isize>
 	) -> Option<isize> {
-		Some(Self::sync_result(listen(socket, backlog).map(|_| 0)))
+		Some(sync_result(listen(socket, backlog).map(|_| 0)))
 	}
 
 	unsafe fn fsync(&mut self, file: BorrowedFd<'_>, request: ReqPtr<isize>) -> Option<isize> {

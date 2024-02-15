@@ -136,6 +136,7 @@ macro_rules! engine_task {
 		#[future]
 		#[inline(always)]
         pub unsafe fn $func(&mut self, $($arg: $type),*) -> isize {
+			#[cancel]
 			fn cancel(self: &mut Self) -> Result<()> {
 				unsafe { self.inner.cancel(request.cast()) }
 			}
