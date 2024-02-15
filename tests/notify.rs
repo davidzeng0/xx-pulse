@@ -53,9 +53,16 @@ async fn test_notify() {
 	let notify = Notify::new();
 	let handle = spawn(waiter(notify.clone())).await;
 
+	println!("here1");
+
 	notify.notify();
+
+	println!("here2");
+
 	handle.await.unwrap();
 	notify.notify();
+
+	println!("here3");
 
 	let notify = Notify::new();
 	let handle = spawn(canceller(notify.clone())).await;
