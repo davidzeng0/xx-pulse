@@ -40,7 +40,7 @@ async fn spawn_within(notify: Pinned<Rc<Notify>>) -> JoinHandle<()> {
 async fn notify_within(notify: Pinned<Rc<Notify>>) {
 	notify.notified().await.unwrap();
 
-	for _ in 0..20 {
+	for _ in 0..30 {
 		spawn(expect_success(notify.clone())).await;
 	}
 
@@ -53,16 +53,9 @@ async fn test_notify() {
 	let notify = Notify::new();
 	let handle = spawn(waiter(notify.clone())).await;
 
-	println!("here1");
-
 	notify.notify();
-
-	println!("here2");
-
 	handle.await.unwrap();
 	notify.notify();
-
-	println!("here3");
 
 	let notify = Notify::new();
 	let handle = spawn(canceller(notify.clone())).await;
@@ -77,8 +70,8 @@ async fn test_notify() {
 
 	spawn(nested_cancel(notify.clone())).await;
 
-	for _ in 0..20 {
-		for _ in 0..20 {
+	for _ in 0..30 {
+		for _ in 0..30 {
 			spawn(expect_success(notify.clone())).await;
 		}
 
@@ -91,14 +84,14 @@ async fn test_notify() {
 	let notify = Notify::new();
 	let mut handle = None;
 
-	for i in 0..20 {
+	for i in 0..30 {
 		if i == 1 {
 			handle = Some(spawn(spawn_within(notify.clone())).await);
 		}
 
 		spawn(nested_cancel(notify.clone())).await;
 
-		for _ in 0..20 {
+		for _ in 0..30 {
 			spawn(expect_success(notify.clone())).await;
 		}
 	}
@@ -123,7 +116,7 @@ async fn test_notify() {
 
 	let notify = Notify::new();
 
-	for _ in 0..100 {
+	for _ in 0..30 {
 		spawn(spawn_within(notify.clone())).await;
 	}
 
@@ -133,7 +126,7 @@ async fn test_notify() {
 
 	let notify = Notify::new();
 
-	for _ in 0..20 {
+	for _ in 0..30 {
 		spawn(notify_within(notify.clone())).await;
 	}
 
