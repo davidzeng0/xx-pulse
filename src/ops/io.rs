@@ -8,6 +8,7 @@ use std::{
 	path::Path
 };
 
+use paste::paste;
 use xx_core::{
 	error::*,
 	os::{
@@ -36,13 +37,13 @@ macro_rules! async_engine_task {
 
 			let result = block_on(unsafe { driver.$func($($arg),*) }).await;
 
-			paste::paste! { Engine::[<result_for_ $func>](result) }
+			paste! { Engine::[<result_for_ $func>](result) }
 		}
 	}
 }
 
 fn path_to_cstr(path: &Path) -> Result<CString> {
-	CString::new(path.as_os_str().as_bytes()).map_err(|_| Core::InvalidCStr.new())
+	CString::new(path.as_os_str().as_bytes()).map_err(|_| Core::InvalidCStr.as_err())
 }
 
 mod internal {
@@ -58,7 +59,7 @@ mod internal {
 
 	async_engine_task!(false, bind(socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32) -> Result<()>);
 
-	async_engine_task!(false, statx(path: &CStr, flags: u32, mask: u32, statx: &mut Statx) -> Result<()>);
+	async_engine_task!(false, statx(dirfd: Option<BorrowedFd<'_>>, path: &CStr, flags: u32, mask: u32, statx: &mut Statx) -> Result<()>);
 }
 
 #[asynchronous]
@@ -130,10 +131,12 @@ async_engine_task!(false, listen(socket: BorrowedFd<'_>, backlog: i32) -> Result
 async_engine_task!(false, fsync(file: BorrowedFd<'_>) -> Result<()>);
 
 #[asynchronous]
-pub async fn statx(path: &Path, flags: u32, mask: u32, statx: &mut Statx) -> Result<()> {
+pub async fn statx(
+	dirfd: Option<BorrowedFd<'_>>, path: &Path, flags: u32, mask: u32, statx: &mut Statx
+) -> Result<()> {
 	let path = path_to_cstr(path)?;
 
-	internal::statx(&path, flags, mask, statx).await
+	internal::statx(dirfd, &path, flags, mask, statx).await
 }
 
 async_engine_task!(false, poll(fd: BorrowedFd<'_>, mask: u32) -> Result<u32>);

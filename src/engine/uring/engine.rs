@@ -12,7 +12,7 @@ use xx_core::{
 	error::*,
 	future::*,
 	opt::hint::*,
-	os::{error::*, io_uring::*, mman::*, openat::*, socket::*, stat::*, time::*, unistd::*},
+	os::{error::*, io_uring::*, mman::*, openat::*, socket::*, stat::*, time::*},
 	pointer::*,
 	trace, warn
 };
@@ -267,27 +267,21 @@ pub struct IoUring {
 
 const NO_OP: Request<isize> = Request::no_op();
 
-fn sync_result(result: Result<isize>) -> isize {
-	match result {
-		Ok(num) => num,
-		Err(err) => -(err.os_error().unwrap() as isize)
-	}
-}
-
 fn create_io_uring() -> Result<(IoRingFeatures, OwnedFd, Parameters)> {
-	struct IoUringEngine {}
+	struct IoUringSetup {}
 
-	let ring = IoUringEngine {};
+	let ring = IoUringSetup {};
 
 	let features = match io_uring_detect_features()? {
 		Some(features) => features,
 		None => {
 			error!(target: &ring,
-				"Failed to setup io_uring. The current linux kernel does not support io_uring. \
-					Please upgrade the kernel to a minimum of version 5.11 (recommended >= 6.1) and try again."
+				"== Failed to setup io_uring.\n\
+				:: The current linux kernel does not support io_uring.\n\
+				:: Please upgrade the kernel to a minimum of version 5.11 (recommended >= 6.1) and try again."
 			);
 
-			return Err(Error::Os(OsError::NoSys));
+			return Err(OsError::NoSys.into());
 		}
 	};
 
@@ -303,7 +297,11 @@ fn create_io_uring() -> Result<(IoRingFeatures, OwnedFd, Parameters)> {
 		(OpCode::RecvMsg, Some("sockets"), None),
 		(OpCode::Send, Some("sockets"), None),
 		(OpCode::SendMsg, Some("sockets"), None),
-		(OpCode::Shutdown, None, Some("Using syscall as fallback")),
+		(
+			OpCode::Shutdown,
+			None,
+			Some("Some operations may be blocking")
+		),
 		(OpCode::FileSync, Some("files"), None),
 		(OpCode::Statx, Some("files"), None),
 		(OpCode::PollAdd, None, None)
@@ -317,7 +315,9 @@ fn create_io_uring() -> Result<(IoRingFeatures, OwnedFd, Parameters)> {
 
 			warn!(
 				target: &ring,
-				"Op code `{:?}`, is not supported. {}. Linux kernel version 6.1 or greater is recommended.",
+				"== Op code `{:?}`, is not supported.\n\
+				:: {}.\n\
+				:: Linux kernel version 6.1 or greater is recommended.",
 				*op,
 				message.unwrap_or(&format!(
 					"Some features {} may not be available",
@@ -349,27 +349,38 @@ fn create_io_uring() -> Result<(IoRingFeatures, OwnedFd, Parameters)> {
 	if !setup_flags.contains(flags) || !features.feature_supported(Feature::ExtArg) {
 		warn!(
 			target: &ring,
-			"Running in compatibility mode on an estimated linux kernel version of {}. \
-				The preferred version is atleast 6.1. Some features may not be available. \
-				Performance may be degraded.",
+			"== Running in compatibility mode on an estimated linux kernel version of {}.\n\
+			:: The preferred version is atleast 6.1. Some features may not be available.\n\
+			:: Performance may be degraded.",
 			features.version()
 		);
 	}
 
-	let err = match io_uring_setup(params.sq_entries, &mut params) {
-		Ok(fd) => return Ok((features, fd, params)),
-		Err(err) => err
-	};
+	match io_uring_setup(params.sq_entries, &mut params) {
+		Ok(fd) => {
+			trace!(
+				target: &ring,
+				"++ Initialized with {}:{} entries",
+				params.sq_entries,
+				params.cq_entries
+			);
 
-	match err.os_error().unwrap() {
-		OsError::NoMem => error!(target: &ring,
-			"Failed to setup io_uring. This is usually because the current locked memory limit is \
-			 too low. Please raise the limit and try again."
-		),
-		_ => ()
+			Ok((features, fd, params))
+		}
+
+		Err(err) => {
+			match err.os_error().unwrap() {
+				OsError::NoMem => error!(target: &ring,
+					"== Failed to setup io_uring.\n\
+					:: This is usually because the current locked memory limit is too low.\n\
+					:: Please raise the limit and try again."
+				),
+				_ => ()
+			}
+
+			Err(err)
+		}
 	}
-
-	Err(err)
 }
 
 impl IoUring {
@@ -390,17 +401,17 @@ impl IoUring {
 	#[inline(never)]
 	fn enter_cold(&mut self, err: Option<Error>) -> Result<()> {
 		let err = match err {
-			None => return Err(Core::OutOfMemory.new()),
+			None => return Err(Core::OutOfMemory.as_err()),
 			Some(err) => err.os_error().unwrap()
 		};
 
 		match err {
 			OsError::Time | OsError::Intr | OsError::Busy if self.to_submit == 0 => return Ok(()),
-			OsError::Again => return Err(Core::OutOfMemory.new()),
+			OsError::Again => return Err(Core::OutOfMemory.as_err()),
 			_ => ()
 		}
 
-		Err(Error::Os(err))
+		Err(err.into())
 	}
 
 	#[inline(always)]
@@ -468,7 +479,10 @@ impl IoUring {
 
 		/* some requests may have completed from `flush()`, if there are no
 		 * completions, our timeout might hang. if we received events, there is no
-		 * need to timeout anyway */
+		 * need to timeout anyway. note that this is a potential race condition.
+		 * the application may hang indefinitely when trying to exit if there are no
+		 * cqes to be posted after the timeout gets queued
+		 */
 		if self.queue.completion.read_ring().1 != tail {
 			return Ok(());
 		}
@@ -576,7 +590,7 @@ impl IoUring {
 }
 
 impl EngineImpl for IoUring {
-	#[inline]
+	#[inline(always)]
 	fn has_work(&self) -> bool {
 		self.to_complete != 0 || self.to_submit != 0
 	}
@@ -609,9 +623,17 @@ impl EngineImpl for IoUring {
 		None
 	}
 
+	fn close_kind(&self) -> OperationKind {
+		if unlikely(!self.features.opcode_supported(OpCode::Close)) {
+			OperationKind::SyncOffload
+		} else {
+			OperationKind::Async
+		}
+	}
+
 	unsafe fn close(&mut self, fd: OwnedFd, request: ReqPtr<isize>) -> Option<isize> {
 		if unlikely(!self.features.opcode_supported(OpCode::Close)) {
-			return Some(sync_result(close(fd).map(|_| 0)));
+			return SyncEngine {}.close(fd, request);
 		}
 
 		/* into is safe here because push panics if out of memory, and we don't
@@ -659,9 +681,7 @@ impl EngineImpl for IoUring {
 		&mut self, domain: u32, socket_type: u32, protocol: u32, request: ReqPtr<isize>
 	) -> Option<isize> {
 		if unlikely(!self.features.opcode_supported(OpCode::Socket)) {
-			return Some(sync_result(
-				socket(domain, socket_type, protocol).map(|fd| fd.into_raw_fd() as isize)
-			));
+			return SyncEngine {}.socket(domain, socket_type, protocol, request);
 		}
 
 		let mut op = Op::socket(domain, socket_type, protocol, 0, 0);
@@ -748,7 +768,7 @@ impl EngineImpl for IoUring {
 		&mut self, socket: BorrowedFd<'_>, how: Shutdown, request: ReqPtr<isize>
 	) -> Option<isize> {
 		if unlikely(!self.features.opcode_supported(OpCode::Shutdown)) {
-			return Some(sync_result(shutdown(socket, how).map(|_| 0)));
+			return SyncEngine {}.shutdown(socket, how, request);
 		}
 
 		let mut op = Op::shutdown(socket.as_raw_fd(), how);
@@ -759,15 +779,15 @@ impl EngineImpl for IoUring {
 	}
 
 	unsafe fn bind(
-		&mut self, socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32, _: ReqPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32, request: ReqPtr<isize>
 	) -> Option<isize> {
-		Some(sync_result(bind_raw(socket, addr, addrlen).map(|_| 0)))
+		SyncEngine {}.bind(socket, addr, addrlen, request)
 	}
 
 	unsafe fn listen(
-		&mut self, socket: BorrowedFd<'_>, backlog: i32, _: ReqPtr<isize>
+		&mut self, socket: BorrowedFd<'_>, backlog: i32, request: ReqPtr<isize>
 	) -> Option<isize> {
-		Some(sync_result(listen(socket, backlog).map(|_| 0)))
+		SyncEngine {}.listen(socket, backlog, request)
 	}
 
 	unsafe fn fsync(&mut self, file: BorrowedFd<'_>, request: ReqPtr<isize>) -> Option<isize> {
@@ -779,10 +799,13 @@ impl EngineImpl for IoUring {
 	}
 
 	unsafe fn statx(
-		&mut self, path: &CStr, flags: u32, mask: u32, statx: &mut Statx, request: ReqPtr<isize>
+		&mut self, dirfd: Option<BorrowedFd<'_>>, path: &CStr, flags: u32, mask: u32,
+		statx: &mut Statx, request: ReqPtr<isize>
 	) -> Option<isize> {
 		let mut op = Op::statx(
-			OpenAt::CurrentWorkingDirectory as i32,
+			dirfd
+				.map(|fd| fd.as_raw_fd())
+				.unwrap_or(OpenAt::CurrentWorkingDirectory as i32),
 			path,
 			flags,
 			mask,

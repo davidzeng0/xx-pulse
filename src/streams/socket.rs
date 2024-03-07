@@ -23,7 +23,7 @@ async fn foreach_addr<A: ToSocketAddrs, F: AsyncFn1<Address, Output = Result<Out
 		}
 	}
 
-	Err(error.unwrap_or_else(|| Core::NoAddresses.new()))
+	Err(error.unwrap_or_else(|| Core::NoAddresses.as_err()))
 }
 
 #[asynchronous]

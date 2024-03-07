@@ -1,7 +1,7 @@
-use std::{io::SeekFrom, path::Path};
+use std::{cell::Cell, io::SeekFrom, path::Path};
 
 use xx_core::os::{
-	fcntl::OpenFlag,
+	fcntl::{AtFlag, OpenFlag},
 	stat::{Statx, StatxMask}
 };
 
@@ -9,40 +9,26 @@ use super::*;
 
 pub struct File {
 	fd: OwnedFd,
-	offset: u64,
-	length: u64
+	offset: Cell<u64>
 }
 
 #[asynchronous]
 impl File {
 	pub async fn open(path: impl AsRef<Path>) -> Result<File> {
-		let mut stat = Statx::default();
-
-		statx(path.as_ref(), 0, 0, &mut stat).await?;
-
-		if stat.mask & (StatxMask::Size as u32) != 0 {
-			Ok(File {
-				fd: open(path.as_ref(), OpenFlag::ReadOnly, 0).await?,
-				offset: 0,
-				length: stat.size
-			})
-		} else {
-			Err(Error::simple(ErrorKind::Other, "Failed to query file size"))
-		}
+		Ok(File {
+			fd: open(path.as_ref(), OpenFlag::ReadOnly, 0).await?,
+			offset: Cell::new(0)
+		})
 	}
 
 	pub async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-		let offset = self.offset;
-		let remaining = (self.length - offset) as usize;
+		read_into!(buf);
 
-		read_into!(buf, remaining);
-
+		let offset = self.offset.get();
 		let read = read(self.fd.as_fd(), buf, offset as i64).await?;
 		let read = check_interrupt_if_zero(read).await?;
 
-		/* store offset to prevent race condition if split and read+write called
-		 * simultaneously */
-		self.offset = offset + read as u64;
+		self.offset.set(offset + read as u64);
 
 		Ok(read)
 	}
@@ -50,11 +36,11 @@ impl File {
 	pub async fn write(&mut self, buf: &[u8]) -> Result<usize> {
 		write_from!(buf);
 
-		let offset = self.offset;
+		let offset = self.offset.get();
 		let wrote = write(self.fd.as_fd(), buf, offset as i64).await?;
 		let wrote = check_interrupt_if_zero(wrote).await?;
 
-		self.offset = offset + wrote as u64;
+		self.offset.set(offset + wrote as u64);
 
 		Ok(wrote)
 	}
@@ -64,13 +50,19 @@ impl File {
 	}
 
 	pub async fn seek(&mut self, seek: SeekFrom) -> Result<u64> {
-		match seek {
-			SeekFrom::Start(pos) => self.offset = pos,
-			SeekFrom::Current(rel) => self.offset = self.offset.checked_add_signed(rel).unwrap(),
-			SeekFrom::End(rel) => self.offset = self.length.checked_add_signed(rel).unwrap()
-		}
+		let offset = match seek {
+			SeekFrom::Start(pos) => pos,
+			SeekFrom::Current(rel) => self
+				.offset
+				.get()
+				.checked_add_signed(rel)
+				.ok_or_else(|| Core::Overflow.as_err())?,
+			SeekFrom::End(rel) => self.stream_len().await?.checked_add_signed(rel).unwrap()
+		};
 
-		Ok(self.offset)
+		self.offset.set(offset);
+
+		Ok(offset)
 	}
 
 	pub async fn close(self) -> Result<()> {
@@ -78,11 +70,7 @@ impl File {
 	}
 
 	pub fn pos(&self) -> u64 {
-		self.offset
-	}
-
-	pub fn len(&self) -> u64 {
-		self.length
+		self.offset.get()
 	}
 }
 
@@ -110,12 +98,26 @@ impl Seek for File {
 		self.seek(seek).await
 	}
 
-	fn stream_len_fast(&self) -> bool {
-		true
-	}
-
 	async fn stream_len(&mut self) -> Result<u64> {
-		Ok(self.len())
+		let mut stat = Statx::default();
+
+		statx(
+			Some(self.fd.as_fd()),
+			"".as_ref(),
+			AtFlag::EmptyPath as u32,
+			0,
+			&mut stat
+		)
+		.await?;
+
+		if stat.mask().intersects(StatxMask::Size) {
+			Ok(stat.size)
+		} else {
+			Err(Error::simple(
+				ErrorKind::Other,
+				Some("Failed to query file size")
+			))
+		}
 	}
 
 	fn stream_position_fast(&self) -> bool {
@@ -123,7 +125,7 @@ impl Seek for File {
 	}
 
 	async fn stream_position(&mut self) -> Result<u64> {
-		Ok(self.offset)
+		Ok(self.pos())
 	}
 }
 

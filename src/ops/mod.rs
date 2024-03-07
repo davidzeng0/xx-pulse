@@ -26,7 +26,7 @@ async fn internal_get_runtime_context() -> Ptr<Pulse> {
 		.ok_or_else(|| {
 			Error::simple(
 				ErrorKind::Other,
-				"Cannot use xx-pulse functions with a different runtime"
+				Some("Cannot use xx-pulse functions with a different runtime")
 			)
 		})
 		.unwrap()

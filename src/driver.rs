@@ -66,12 +66,10 @@ impl Driver {
 		time::time(ClockId::Monotonic).expect("Failed to read the clock")
 	}
 
-	#[inline(always)]
 	fn timer_complete(timeout: Timeout, result: Result<()>) {
 		unsafe { Request::complete(timeout.request, result) };
 	}
 
-	#[inline(always)]
 	fn expire_first_timer(timers: &mut BTreeSet<Timeout>, result: Result<()>) {
 		let timeout = timers.pop_first().unwrap();
 
@@ -85,10 +83,10 @@ impl Driver {
 	fn cancel_timer(&self, timer: Timeout) -> Result<()> {
 		let timeout = match unsafe { self.inner.as_mut().timers.take(&timer) } {
 			Some(timeout) => timeout,
-			None => return Err(DriverError::TimerNotFound.new())
+			None => return Err(DriverError::TimerNotFound.as_err())
 		};
 
-		Self::timer_complete(timeout, Err(DriverError::TimerCancelled.new()));
+		Self::timer_complete(timeout, Err(DriverError::TimerCancelled.as_err()));
 
 		Ok(())
 	}
@@ -101,7 +99,7 @@ impl Driver {
 		}
 
 		if unlikely(unsafe { self.inner.as_ref().exiting }) {
-			return Progress::Done(Err(DriverError::Shutdown.new()));
+			return Progress::Done(Err(DriverError::Shutdown.as_err()));
 		}
 
 		if !flags.intersects(TimeoutFlag::Abs) {
@@ -162,7 +160,7 @@ impl Driver {
 					break;
 				}
 
-				Self::expire_first_timer(timers, Err(DriverError::Shutdown.new()))
+				Self::expire_first_timer(timers, Err(DriverError::Shutdown.as_err()))
 			}
 
 			loop {
@@ -187,7 +185,7 @@ impl Driver {
 		if likely(!unsafe { self.inner.as_ref().exiting }) {
 			Ok(())
 		} else {
-			Err(DriverError::Shutdown.new())
+			Err(DriverError::Shutdown.as_err())
 		}
 	}
 }
@@ -238,7 +236,7 @@ impl Driver {
 
 	alias_func!(fsync(file: BorrowedFd<'_>));
 
-	alias_func!(statx(path: &CStr, flags: u32, mask: u32, statx: &mut Statx));
+	alias_func!(statx(dirfd: Option<BorrowedFd<'_>>, path: &CStr, flags: u32, mask: u32, statx: &mut Statx));
 
 	alias_func!(poll(fd: BorrowedFd<'_>, mask: u32));
 }
