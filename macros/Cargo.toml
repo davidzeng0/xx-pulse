@@ -7,7 +7,7 @@ edition = "2021"
 proc-macro2 = "1.0.67"
 quote = "1.0.33"
 syn = { version = "2.0.37", features = ["full"] }
-xx-macro-support = { path = "../../xx-macro-support" }
+xx-macro-support = { git = "https://github.com/davidzeng0/xx-macro-support.git" }
 
 [lib]
 proc-macro = true
