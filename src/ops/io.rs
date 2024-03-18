@@ -36,6 +36,7 @@ pub mod raw {
 		use super::*;
 
 		pub unsafe fn get_cstr_as_str<'a>(cstr: Ptr<()>) -> &'a str {
+			/* Safety: guaranteed by caller */
 			let cstr = unsafe { std::ffi::CStr::from_ptr(cstr.as_ptr().cast()) };
 
 			cstr.to_str().unwrap_or("<error>")
@@ -44,7 +45,7 @@ pub mod raw {
 		pub struct EnumDisplay<T>(u32, PhantomData<T>);
 
 		impl<T> EnumDisplay<T> {
-			pub fn new(value: u32) -> Self {
+			pub const fn new(value: u32) -> Self {
 				Self(value, PhantomData)
 			}
 		}
@@ -62,7 +63,7 @@ pub mod raw {
 		pub struct FlagsDisplay<T>(u32, PhantomData<T>);
 
 		impl<T> FlagsDisplay<T> {
-			pub fn new(value: u32) -> Self {
+			pub const fn new(value: u32) -> Self {
 				Self(value, PhantomData)
 			}
 		}
@@ -71,7 +72,7 @@ pub mod raw {
 			fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
 				let (flags, invalid) = match BitFlags::<T>::from_bits(self.0) {
 					Ok(flags) => (flags, None),
-					Err(err) => (err.clone().truncate(), Some(err.invalid_bits()))
+					Err(err) => (err.truncate(), Some(err.invalid_bits()))
 				};
 
 				match (flags.is_empty(), invalid) {
@@ -131,6 +132,7 @@ pub mod raw {
 	async_engine_task!(false, open(path: Ptr<()>, flags: u32, mode: u32) -> Result<OwnedFd> {
 		trace(
 			"## open(path = {}, flags = {}, mode = {:o}) = {:?}",
+			/* Safety: guaranteed by caller */
 			unsafe { get_cstr_as_str(path) },
 			FlagsDisplay::<OpenFlag>::new(flags),
 			mode
@@ -222,6 +224,7 @@ pub mod raw {
 		trace(
 			"## statx(dirfd = {}, path = {}, flags = {}, mask = {}, statx = {:?}) = {:?}",
 			dirfd,
+			/* Safety: guaranteed by caller */
 			unsafe { get_cstr_as_str(path) },
 			FlagsDisplay::<AtFlag>::new(flags),
 			FlagsDisplay::<StatxMask>::new(mask),
