@@ -5,8 +5,9 @@ RUN apt update && \
 	apt clean
 
 RUN cargo install cargo-valgrind cargo-llvm-cov
-RUN rustup install nightly
-RUN rustup component add clippy
+RUN rustup default nightly && \
+	rustup component add clippy && \
+	rustup default stable
 
 WORKDIR /base
 ENTRYPOINT [ "/bin/bash", "-c" ]
