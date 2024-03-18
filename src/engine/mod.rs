@@ -1,21 +1,25 @@
-use std::{
-	ffi::CStr,
-	os::fd::{BorrowedFd, FromRawFd, IntoRawFd, OwnedFd}
-};
+#![allow(unreachable_pub, clippy::module_name_repetitions)]
+
+use std::os::fd::{IntoRawFd, OwnedFd, RawFd};
 
 use paste::paste;
 use xx_core::{
-	error::Result,
+	error::*,
 	future::*,
-	os::{error::result_from_int, socket::*, stat::Statx, unistd::close},
+	os::{
+		socket::{raw::MsgHdr, *},
+		stat::Statx,
+		syscall::SyscallResult,
+		unistd::close_raw
+	},
 	pointer::*
 };
 
-use self::uring::IoUring;
-
 mod uring;
+use uring::IoUring;
 
 #[allow(dead_code)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum OperationKind {
 	Async,
 	SyncOffload,
@@ -29,28 +33,29 @@ pub enum OperationKind {
 ///
 /// The result must be interpreted correctly, in order
 /// to prevent memory and/or file descriptor leaks
+#[allow(dead_code)]
 pub trait EngineImpl {
 	fn has_work(&self) -> bool;
-	fn work(&mut self, timeout: u64) -> Result<()>;
+	fn work(&self, timeout: u64) -> Result<()>;
 
-	unsafe fn cancel(&mut self, request: ReqPtr<()>) -> Result<()>;
+	unsafe fn cancel(&self, request: ReqPtr<()>) -> Result<()>;
 
 	fn open_kind(&self) -> OperationKind {
 		OperationKind::SyncOffload
 	}
 
 	unsafe fn open(
-		&mut self, _path: &CStr, _flags: u32, _mode: u32, _request: ReqPtr<isize>
+		&self, _path: Ptr<()>, _flags: u32, _mode: u32, _request: ReqPtr<isize>
 	) -> Option<isize> {
-		panic!();
+		unimplemented!();
 	}
 
 	fn close_kind(&self) -> OperationKind {
 		OperationKind::SyncOffload
 	}
 
-	unsafe fn close(&mut self, _fd: OwnedFd, _request: ReqPtr<isize>) -> Option<isize> {
-		panic!();
+	unsafe fn close(&self, _fd: RawFd, _request: ReqPtr<isize>) -> Option<isize> {
+		unimplemented!();
 	}
 
 	fn read_kind(&self) -> OperationKind {
@@ -58,9 +63,9 @@ pub trait EngineImpl {
 	}
 
 	unsafe fn read(
-		&mut self, _fd: BorrowedFd<'_>, _buf: &mut [u8], _offset: i64, _request: ReqPtr<isize>
+		&self, _fd: RawFd, _buf: MutPtr<()>, _len: usize, _offset: i64, _request: ReqPtr<isize>
 	) -> Option<isize> {
-		panic!();
+		unimplemented!();
 	}
 
 	fn write_kind(&self) -> OperationKind {
@@ -68,9 +73,9 @@ pub trait EngineImpl {
 	}
 
 	unsafe fn write(
-		&mut self, _fd: BorrowedFd<'_>, _buf: &[u8], _offset: i64, _request: ReqPtr<isize>
+		&self, _fd: RawFd, _buf: Ptr<()>, _len: usize, _offset: i64, _request: ReqPtr<isize>
 	) -> Option<isize> {
-		panic!();
+		unimplemented!();
 	}
 
 	fn socket_kind(&self) -> OperationKind {
@@ -78,9 +83,9 @@ pub trait EngineImpl {
 	}
 
 	unsafe fn socket(
-		&mut self, _domain: u32, _socket_type: u32, _protocol: u32, _request: ReqPtr<isize>
+		&self, _domain: u32, _socket_type: u32, _protocol: u32, _request: ReqPtr<isize>
 	) -> Option<isize> {
-		panic!();
+		unimplemented!();
 	}
 
 	fn accept_kind(&self) -> OperationKind {
@@ -88,10 +93,9 @@ pub trait EngineImpl {
 	}
 
 	unsafe fn accept(
-		&mut self, _socket: BorrowedFd<'_>, _addr: MutPtr<()>, _addrlen: &mut u32,
-		_request: ReqPtr<isize>
+		&self, _socket: RawFd, _addr: MutPtr<()>, _addrlen: MutPtr<i32>, _request: ReqPtr<isize>
 	) -> Option<isize> {
-		panic!();
+		unimplemented!();
 	}
 
 	fn connect_kind(&self) -> OperationKind {
@@ -99,9 +103,9 @@ pub trait EngineImpl {
 	}
 
 	unsafe fn connect(
-		&mut self, _socket: BorrowedFd<'_>, _addr: Ptr<()>, _addrlen: u32, _request: ReqPtr<isize>
+		&self, _socket: RawFd, _addr: Ptr<()>, _addrlen: i32, _request: ReqPtr<isize>
 	) -> Option<isize> {
-		panic!();
+		unimplemented!();
 	}
 
 	fn recv_kind(&self) -> OperationKind {
@@ -109,9 +113,9 @@ pub trait EngineImpl {
 	}
 
 	unsafe fn recv(
-		&mut self, _socket: BorrowedFd<'_>, _buf: &mut [u8], _flags: u32, _request: ReqPtr<isize>
+		&self, _socket: RawFd, _buf: MutPtr<()>, _len: usize, _flags: u32, _request: ReqPtr<isize>
 	) -> Option<isize> {
-		panic!();
+		unimplemented!();
 	}
 
 	fn recvmsg_kind(&self) -> OperationKind {
@@ -119,10 +123,9 @@ pub trait EngineImpl {
 	}
 
 	unsafe fn recvmsg(
-		&mut self, _socket: BorrowedFd<'_>, _header: &mut MessageHeaderMut<'_>, _flags: u32,
-		_request: ReqPtr<isize>
+		&self, _socket: RawFd, _header: MutPtr<MsgHdr>, _flags: u32, _request: ReqPtr<isize>
 	) -> Option<isize> {
-		panic!();
+		unimplemented!();
 	}
 
 	fn send_kind(&self) -> OperationKind {
@@ -130,9 +133,9 @@ pub trait EngineImpl {
 	}
 
 	unsafe fn send(
-		&mut self, _socket: BorrowedFd<'_>, _buf: &[u8], _flags: u32, _request: ReqPtr<isize>
+		&self, _socket: RawFd, _buf: Ptr<()>, _len: usize, _flags: u32, _request: ReqPtr<isize>
 	) -> Option<isize> {
-		panic!();
+		unimplemented!();
 	}
 
 	fn sendmsg_kind(&self) -> OperationKind {
@@ -140,20 +143,17 @@ pub trait EngineImpl {
 	}
 
 	unsafe fn sendmsg(
-		&mut self, _socket: BorrowedFd<'_>, _header: &MessageHeader<'_>, _flags: u32,
-		_request: ReqPtr<isize>
+		&self, _socket: RawFd, _header: Ptr<MsgHdr>, _flags: u32, _request: ReqPtr<isize>
 	) -> Option<isize> {
-		panic!();
+		unimplemented!();
 	}
 
 	fn shutdown_kind(&self) -> OperationKind {
 		OperationKind::SyncOffload
 	}
 
-	unsafe fn shutdown(
-		&mut self, _socket: BorrowedFd<'_>, _how: Shutdown, _request: ReqPtr<isize>
-	) -> Option<isize> {
-		panic!();
+	unsafe fn shutdown(&self, _socket: RawFd, _how: u32, _request: ReqPtr<isize>) -> Option<isize> {
+		unimplemented!();
 	}
 
 	fn bind_kind(&self) -> OperationKind {
@@ -161,9 +161,9 @@ pub trait EngineImpl {
 	}
 
 	unsafe fn bind(
-		&mut self, _socket: BorrowedFd<'_>, _addr: Ptr<()>, _addrlen: u32, _request: ReqPtr<isize>
+		&self, _socket: RawFd, _addr: Ptr<()>, _addrlen: i32, _request: ReqPtr<isize>
 	) -> Option<isize> {
-		panic!();
+		unimplemented!();
 	}
 
 	fn listen_kind(&self) -> OperationKind {
@@ -171,17 +171,17 @@ pub trait EngineImpl {
 	}
 
 	unsafe fn listen(
-		&mut self, _socket: BorrowedFd<'_>, _backlog: i32, _request: ReqPtr<isize>
+		&self, _socket: RawFd, _backlog: i32, _request: ReqPtr<isize>
 	) -> Option<isize> {
-		panic!();
+		unimplemented!();
 	}
 
 	fn fsync_kind(&self) -> OperationKind {
 		OperationKind::SyncOffload
 	}
 
-	unsafe fn fsync(&mut self, _file: BorrowedFd<'_>, _request: ReqPtr<isize>) -> Option<isize> {
-		panic!();
+	unsafe fn fsync(&self, _file: RawFd, _request: ReqPtr<isize>) -> Option<isize> {
+		unimplemented!();
 	}
 
 	fn statx_kind(&self) -> OperationKind {
@@ -189,20 +189,18 @@ pub trait EngineImpl {
 	}
 
 	unsafe fn statx(
-		&mut self, _dirfd: Option<BorrowedFd<'_>>, _path: &CStr, _flags: u32, _mask: u32,
-		_statx: &mut Statx, _request: ReqPtr<isize>
+		&self, _dirfd: RawFd, _path: Ptr<()>, _flags: u32, _mask: u32, _statx: MutPtr<Statx>,
+		_request: ReqPtr<isize>
 	) -> Option<isize> {
-		panic!();
+		unimplemented!();
 	}
 
 	fn poll_kind(&self) -> OperationKind {
 		OperationKind::SyncOffload
 	}
 
-	unsafe fn poll(
-		&mut self, _fd: BorrowedFd<'_>, _mask: u32, _request: ReqPtr<isize>
-	) -> Option<isize> {
-		panic!();
+	unsafe fn poll(&self, _fd: RawFd, _mask: u32, _request: ReqPtr<isize>) -> Option<isize> {
+		unimplemented!();
 	}
 }
 
@@ -210,6 +208,7 @@ pub struct SyncEngine {}
 
 impl SyncEngine {
 	fn sync_result(result: Result<isize>) -> isize {
+		#[allow(clippy::unwrap_used, clippy::arithmetic_side_effects)]
 		match result {
 			Ok(num) => num,
 			Err(err) => -(err.os_error().unwrap() as isize)
@@ -223,116 +222,54 @@ impl EngineImpl for SyncEngine {
 		false
 	}
 
-	fn work(&mut self, _: u64) -> Result<()> {
+	fn work(&self, _: u64) -> Result<()> {
 		// TODO: sleep?
 		Ok(())
 	}
 
-	unsafe fn cancel(&mut self, _: ReqPtr<()>) -> Result<()> {
+	unsafe fn cancel(&self, _: ReqPtr<()>) -> Result<()> {
 		/* nothing to cancel */
 		Ok(())
 	}
 
-	unsafe fn open(
-		&mut self, path: &CStr, flags: u32, mode: u32, _: ReqPtr<isize>
-	) -> Option<isize> {
-		panic!();
-	}
+	unsafe fn close(&self, fd: RawFd, _: ReqPtr<isize>) -> Option<isize> {
+		/* Safety: guaranteed by caller */
+		let result = unsafe { close_raw(fd) };
 
-	unsafe fn close(&mut self, fd: OwnedFd, _: ReqPtr<isize>) -> Option<isize> {
-		Some(Self::sync_result(close(fd).map(|_| 0)))
-	}
-
-	unsafe fn read(
-		&mut self, fd: BorrowedFd<'_>, buf: &mut [u8], offset: i64, _: ReqPtr<isize>
-	) -> Option<isize> {
-		panic!();
-	}
-
-	unsafe fn write(
-		&mut self, fd: BorrowedFd<'_>, buf: &[u8], offset: i64, _: ReqPtr<isize>
-	) -> Option<isize> {
-		panic!();
+		Some(Self::sync_result(result.map(|()| 0)))
 	}
 
 	unsafe fn socket(
-		&mut self, domain: u32, socket_type: u32, protocol: u32, _: ReqPtr<isize>
+		&self, domain: u32, socket_type: u32, protocol: u32, _: ReqPtr<isize>
 	) -> Option<isize> {
+		let result = socket(domain, socket_type, protocol);
+
 		Some(Self::sync_result(
-			socket(domain, socket_type, protocol).map(|fd| fd.into_raw_fd() as isize)
+			result.map(|fd| fd.into_raw_fd() as isize)
 		))
 	}
 
-	unsafe fn accept(
-		&mut self, socket: BorrowedFd<'_>, addr: MutPtr<()>, addrlen: &mut u32, _: ReqPtr<isize>
-	) -> Option<isize> {
-		panic!();
-	}
+	unsafe fn shutdown(&self, socket: RawFd, how: u32, _: ReqPtr<isize>) -> Option<isize> {
+		/* Safety: guaranteed by caller */
+		let result = unsafe { shutdown_raw(socket, how) };
 
-	unsafe fn connect(
-		&mut self, socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32, _: ReqPtr<isize>
-	) -> Option<isize> {
-		panic!();
-	}
-
-	unsafe fn recv(
-		&mut self, socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32, _: ReqPtr<isize>
-	) -> Option<isize> {
-		panic!();
-	}
-
-	unsafe fn recvmsg(
-		&mut self, socket: BorrowedFd<'_>, header: &mut MessageHeaderMut<'_>, flags: u32,
-		_: ReqPtr<isize>
-	) -> Option<isize> {
-		panic!();
-	}
-
-	unsafe fn send(
-		&mut self, socket: BorrowedFd<'_>, buf: &[u8], flags: u32, _: ReqPtr<isize>
-	) -> Option<isize> {
-		panic!();
-	}
-
-	unsafe fn sendmsg(
-		&mut self, socket: BorrowedFd<'_>, header: &MessageHeader<'_>, flags: u32, _: ReqPtr<isize>
-	) -> Option<isize> {
-		panic!();
-	}
-
-	unsafe fn shutdown(
-		&mut self, socket: BorrowedFd<'_>, how: Shutdown, _: ReqPtr<isize>
-	) -> Option<isize> {
-		Some(Self::sync_result(shutdown(socket, how).map(|_| 0)))
+		Some(Self::sync_result(result.map(|()| 0)))
 	}
 
 	unsafe fn bind(
-		&mut self, socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32, _: ReqPtr<isize>
+		&self, socket: RawFd, addr: Ptr<()>, addrlen: i32, _: ReqPtr<isize>
 	) -> Option<isize> {
-		Some(Self::sync_result(
-			bind_raw(socket, addr, addrlen).map(|_| 0)
-		))
+		/* Safety: guaranteed by caller */
+		let result = unsafe { bind_raw(socket, addr, addrlen) };
+
+		Some(Self::sync_result(result.map(|()| 0)))
 	}
 
-	unsafe fn listen(
-		&mut self, socket: BorrowedFd<'_>, backlog: i32, _: ReqPtr<isize>
-	) -> Option<isize> {
-		Some(Self::sync_result(listen(socket, backlog).map(|_| 0)))
-	}
+	unsafe fn listen(&self, socket: RawFd, backlog: i32, _: ReqPtr<isize>) -> Option<isize> {
+		/* Safety: guaranteed by caller */
+		let result = unsafe { listen_raw(socket, backlog) };
 
-	unsafe fn fsync(&mut self, file: BorrowedFd<'_>, _: ReqPtr<isize>) -> Option<isize> {
-		panic!();
-	}
-
-	unsafe fn statx(
-		&mut self, dirfd: Option<BorrowedFd<'_>>, path: &CStr, flags: u32, mask: u32,
-		statx: &mut Statx, _: ReqPtr<isize>
-	) -> Option<isize> {
-		panic!();
-	}
-
-	unsafe fn poll(&mut self, fd: BorrowedFd<'_>, mask: u32, _: ReqPtr<isize>) -> Option<isize> {
-		panic!();
+		Some(Self::sync_result(result.map(|()| 0)))
 	}
 }
 
@@ -344,56 +281,30 @@ pub struct Engine {
 	inner: IoUring
 }
 
-trait FromEngineResult {
-	fn from(val: isize) -> Self;
-}
-
-impl FromEngineResult for Result<()> {
-	fn from(val: isize) -> Self {
-		result_from_int(val).map(|_| ())
-	}
-}
-
-impl FromEngineResult for Result<usize> {
-	fn from(val: isize) -> Self {
-		result_from_int(val).map(|result| result as usize)
-	}
-}
-
-impl FromEngineResult for Result<u32> {
-	fn from(val: isize) -> Self {
-		result_from_int(val).map(|result| result as u32)
-	}
-}
-
-impl FromEngineResult for Result<OwnedFd> {
-	fn from(val: isize) -> Self {
-		result_from_int(val).map(|raw_fd| unsafe { OwnedFd::from_raw_fd(raw_fd as i32) })
-	}
-}
-
 macro_rules! engine_task {
 	($func: ident ($($arg: ident: $type: ty),*) -> $return_type: ty) => {
 		#[future]
 		#[inline(always)]
-        pub unsafe fn $func(&mut self, $($arg: $type),*) -> isize {
+		pub unsafe fn $func(&self, $($arg: $type),*) -> isize {
 			#[cancel]
-			fn cancel(self: &mut Self) -> Result<()> {
+			fn cancel(&self) -> Result<()> {
+				/* Safety: caller must enfore Future's contract */
 				unsafe { self.inner.cancel(request.cast()) }
 			}
 
-			match self.inner.$func($($arg),*, request) {
+			/* Safety: caller must uphold Future's contract */
+			match unsafe { self.inner.$func($($arg,)* request) } {
 				None => Progress::Pending(cancel(self, request)),
 				Some(result) => Progress::Done(result),
 			}
-        }
+		}
 
 		paste! {
 			pub fn [<result_for_ $func>](val: isize) -> $return_type {
-				FromEngineResult::from(val)
+				SyscallResult(val).into()
 			}
 		}
-    }
+	}
 }
 
 impl Engine {
@@ -410,43 +321,43 @@ impl Engine {
 	}
 
 	#[inline(always)]
-	pub fn work(&mut self, timeout: u64) -> Result<()> {
+	pub fn work(&self, timeout: u64) -> Result<()> {
 		self.inner.work(timeout)
 	}
 }
 
 impl Engine {
-	engine_task!(open(path: &CStr, flags: u32, mode: u32) -> Result<OwnedFd>);
+	engine_task!(open(path: Ptr<()>, flags: u32, mode: u32) -> Result<OwnedFd>);
 
-	engine_task!(close(fd: OwnedFd) -> Result<()>);
+	engine_task!(close(fd: RawFd) -> Result<()>);
 
-	engine_task!(read(fd: BorrowedFd<'_>, buf: &mut [u8], offset: i64) -> Result<usize>);
+	engine_task!(read(fd: RawFd, buf: MutPtr<()>, len: usize, offset: i64) -> Result<usize>);
 
-	engine_task!(write(fd: BorrowedFd<'_>, buf: &[u8], offset: i64) -> Result<usize>);
+	engine_task!(write(fd: RawFd, buf: Ptr<()>, len: usize, offset: i64) -> Result<usize>);
 
-	engine_task!(socket(domain: u32, socket_type: u32, protocol: u32) -> Result<OwnedFd>);
+	engine_task!(socket(domain: u32, sockettype: u32, protocol: u32) -> Result<OwnedFd>);
 
-	engine_task!(accept(socket: BorrowedFd<'_>, addr: MutPtr<()>, addrlen: &mut u32) -> Result<OwnedFd>);
+	engine_task!(accept(socket: RawFd, addr: MutPtr<()>, addrlen: MutPtr<i32>) -> Result<OwnedFd>);
 
-	engine_task!(connect(socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32) -> Result<()>);
+	engine_task!(connect(socket: RawFd, addr: Ptr<()>, addrlen: i32) -> Result<()>);
 
-	engine_task!(recv(socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32) -> Result<usize>);
+	engine_task!(recv(socket: RawFd, buf: MutPtr<()>, len: usize, flags: u32) -> Result<usize>);
 
-	engine_task!(recvmsg(socket: BorrowedFd<'_>, header: &mut MessageHeaderMut<'_>, flags: u32) -> Result<usize>);
+	engine_task!(recvmsg(socket: RawFd, header: MutPtr<MsgHdr>, flags: u32) -> Result<usize>);
 
-	engine_task!(send(socket: BorrowedFd<'_>, buf: &[u8], flags: u32) -> Result<usize>);
+	engine_task!(send(socket: RawFd, buf: Ptr<()>, len: usize, flags: u32) -> Result<usize>);
 
-	engine_task!(sendmsg(socket: BorrowedFd<'_>, header: &MessageHeader<'_>, flags: u32) -> Result<usize>);
+	engine_task!(sendmsg(socket: RawFd, header: Ptr<MsgHdr>, flags: u32) -> Result<usize>);
 
-	engine_task!(shutdown(socket: BorrowedFd<'_>, how: Shutdown) -> Result<()>);
+	engine_task!(shutdown(socket: RawFd, how: u32) -> Result<()>);
 
-	engine_task!(bind(socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32) -> Result<()>);
+	engine_task!(bind(socket: RawFd, addr: Ptr<()>, addrlen: i32) -> Result<()>);
 
-	engine_task!(listen(socket: BorrowedFd<'_>, backlog: i32) -> Result<()>);
+	engine_task!(listen(socket: RawFd, backlog: i32) -> Result<()>);
 
-	engine_task!(fsync(file: BorrowedFd<'_>) -> Result<()>);
+	engine_task!(fsync(file: RawFd) -> Result<()>);
 
-	engine_task!(statx(dirfd: Option<BorrowedFd<'_>>, path: &CStr, flags: u32, mask: u32, statx: &mut Statx) -> Result<()>);
+	engine_task!(statx(dirfd: RawFd, path: Ptr<()>, flags: u32, mask: u32, statx: MutPtr<Statx>) -> Result<()>);
 
-	engine_task!(poll(fd: BorrowedFd<'_>, mask: u32) -> Result<u32>);
+	engine_task!(poll(fd: RawFd, mask: u32) -> Result<u32>);
 }

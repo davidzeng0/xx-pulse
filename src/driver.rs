@@ -1,24 +1,20 @@
-use std::{
-	collections::BTreeSet,
-	ffi::CStr,
-	os::fd::{BorrowedFd, OwnedFd}
-};
+#![allow(unreachable_pub)]
+
+use std::{collections::BTreeSet, os::fd::RawFd};
 
 use enumflags2::*;
 use xx_core::{
-	error::*,
-	future::*,
-	macros::duration,
+	macros::{abort, duration},
 	opt::hint::*,
 	os::{
-		socket::{MessageHeader, MessageHeaderMut, Shutdown},
+		socket::raw,
 		stat::Statx,
 		time::{self, ClockId}
 	},
 	pointer::*
 };
 
-use super::engine::Engine;
+use super::*;
 
 #[bitflags]
 #[repr(u32)]
@@ -27,13 +23,14 @@ pub enum TimeoutFlag {
 	Abs = 1 << 0
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 struct Timeout {
 	expire: u64,
 	request: ReqPtr<Result<()>>
 }
 
 #[compact_error]
+#[allow(clippy::module_name_repetitions)]
 pub enum DriverError {
 	Shutdown       = (ErrorKind::Other, "Driver is shutting down"),
 	TimerCancelled = (ErrorKind::Interrupted, "Timer cancelled"),
@@ -41,52 +38,72 @@ pub enum DriverError {
 }
 
 struct DriverInner {
-	io_engine: Engine,
 	timers: BTreeSet<Timeout>,
 	exiting: bool
 }
 
 pub struct Driver {
-	inner: UnsafeCell<DriverInner>
+	inner: UnsafeCell<DriverInner>,
+	io_engine: Engine
 }
 
 impl Driver {
 	pub fn new() -> Result<Self> {
 		Ok(Self {
-			inner: UnsafeCell::new(DriverInner {
-				timers: BTreeSet::new(),
-				io_engine: Engine::new()?,
-				exiting: false
-			})
+			inner: UnsafeCell::new(DriverInner { timers: BTreeSet::new(), exiting: false }),
+			io_engine: Engine::new()?
 		})
 	}
 
 	#[inline(always)]
-	pub fn now() -> u64 {
-		time::time(ClockId::Monotonic).expect("Failed to read the clock")
+	fn try_time() -> Result<u64> {
+		time::time(ClockId::Monotonic)
 	}
 
-	fn timer_complete(timeout: Timeout, result: Result<()>) {
+	#[inline(always)]
+	fn time_or_abort() -> u64 {
+		match Self::try_time() {
+			Ok(time) => time,
+			Err(err) => abort!("Failed to read the clock: {:?}", err)
+		}
+	}
+
+	#[inline(always)]
+	#[allow(clippy::expect_used)]
+	pub fn time() -> u64 {
+		Self::try_time().expect("Failed to read the clock")
+	}
+
+	unsafe fn timer_complete(timeout: Timeout, result: Result<()>) {
+		/* Safety: guaranteed by caller */
 		unsafe { Request::complete(timeout.request, result) };
 	}
 
 	fn expire_first_timer(timers: &mut BTreeSet<Timeout>, result: Result<()>) {
+		#[allow(clippy::unwrap_used)]
 		let timeout = timers.pop_first().unwrap();
 
-		Self::timer_complete(timeout, result);
+		/* Safety: complete the future */
+		unsafe { Self::timer_complete(timeout, result) };
 	}
 
 	fn queue_timer(&self, timer: Timeout) {
+		/* Safety: exclusive unsafe cell access */
 		unsafe { self.inner.as_mut().timers.insert(timer) };
 	}
 
 	fn cancel_timer(&self, timer: Timeout) -> Result<()> {
+		/* Safety: we have exclusive mutable access until expire */
 		let timeout = match unsafe { self.inner.as_mut().timers.take(&timer) } {
 			Some(timeout) => timeout,
 			None => return Err(DriverError::TimerNotFound.as_err())
 		};
 
-		Self::timer_complete(timeout, Err(DriverError::TimerCancelled.as_err()));
+		#[cfg(feature = "tracing-ext")]
+		xx_core::trace!(target: self, "## cancel_timer(request = {:?}) = Ok(reason = cancel)", timeout.request);
+
+		/* Safety: complete the future */
+		unsafe { Self::timer_complete(timeout, Err(DriverError::TimerCancelled.as_err())) };
 
 		Ok(())
 	}
@@ -94,17 +111,20 @@ impl Driver {
 	#[future]
 	pub fn timeout(&self, mut expire: u64, flags: BitFlags<TimeoutFlag>) -> Result<()> {
 		#[cancel]
-		fn cancel(self: &Self, expire: u64) -> Result<()> {
+		fn cancel(&self, expire: u64) -> Result<()> {
 			self.cancel_timer(Timeout { expire, request })
 		}
 
-		if unlikely(unsafe { self.inner.as_ref().exiting }) {
-			return Progress::Done(Err(DriverError::Shutdown.as_err()));
+		if let Err(err) = self.check_exiting() {
+			return Progress::Done(Err(err));
 		}
 
 		if !flags.intersects(TimeoutFlag::Abs) {
-			expire = expire.saturating_add(Driver::now());
+			expire = expire.saturating_add(Self::time());
 		}
+
+		#[cfg(feature = "tracing-ext")]
+		xx_core::trace!(target: self, "## timeout(expire = {}, request = {:?}) = Ok(())", expire, request);
 
 		self.queue_timer(Timeout { expire, request });
 
@@ -113,11 +133,13 @@ impl Driver {
 
 	#[inline(always)]
 	pub fn run_timers(&self) -> u64 {
+		#[allow(clippy::cast_possible_truncation)]
 		let mut timeout = duration!(1 h).as_nanos() as u64;
-		let mut now = Self::now();
 		let mut ran = false;
+		let mut now = Self::time_or_abort();
 
 		loop {
+			/* Safety: we have mutable access until expire */
 			let timers = unsafe { &mut self.inner.as_mut().timers };
 			let timer = match timers.first() {
 				None => break,
@@ -126,7 +148,7 @@ impl Driver {
 
 			if timer.expire > now {
 				if ran {
-					now = Self::now();
+					now = Self::time_or_abort();
 				}
 
 				timeout = timer.expire.saturating_sub(now);
@@ -136,6 +158,9 @@ impl Driver {
 
 			ran = true;
 
+			#[cfg(feature = "tracing-ext")]
+			xx_core::trace!(target: self, "## run_timers: complete(request = {:?}, reason = timeout)", timer.request);
+
 			Self::expire_first_timer(timers, Ok(()));
 		}
 
@@ -143,45 +168,50 @@ impl Driver {
 	}
 
 	#[inline(always)]
-	pub fn park(&self, timeout: u64) -> Result<()> {
-		unsafe { self.inner.as_mut().io_engine.work(timeout) }
+	fn work(&self, timeout: u64) {
+		match self.io_engine.work(timeout) {
+			Ok(()) => (),
+			Err(err) => abort!("Fatal error from engine: {:?}", err)
+		}
 	}
 
-	pub fn exit(&self) -> Result<()> {
-		unsafe {
-			let exiting = { &mut self.inner.as_mut().exiting };
+	#[inline(always)]
+	pub fn park(&self, timeout: u64) {
+		self.work(timeout);
+	}
 
-			*exiting = true;
+	pub fn exit(&self) {
+		/* Safety: exclusive unsafe cell access */
+		unsafe { self.inner.as_mut().exiting = true };
 
-			loop {
-				let timers = &mut self.inner.as_mut().timers;
+		loop {
+			/* Safety: we have exclusive access until expire */
+			let timers = unsafe { &mut self.inner.as_mut().timers };
 
-				if timers.is_empty() {
-					break;
-				}
-
-				Self::expire_first_timer(timers, Err(DriverError::Shutdown.as_err()))
+			if timers.is_empty() {
+				break;
 			}
 
-			loop {
-				let timeout = self.run_timers();
-				let engine = &mut self.inner.as_mut().io_engine;
-
-				if !engine.has_work() {
-					break;
-				}
-
-				engine.work(timeout)?;
-			}
-
-			*exiting = false;
+			Self::expire_first_timer(timers, Err(DriverError::Shutdown.as_err()));
 		}
 
-		Ok(())
+		loop {
+			let timeout = self.run_timers();
+
+			if !self.io_engine.has_work() {
+				break;
+			}
+
+			self.work(timeout);
+		}
+
+		/* Safety: exclusive unsafe cell access */
+		unsafe { self.inner.as_mut().exiting = false };
 	}
 
 	#[inline(always)]
 	pub fn check_exiting(&self) -> Result<()> {
+		/* Safety: exclusive unsafe cell access */
 		if likely(!unsafe { self.inner.as_ref().exiting }) {
 			Ok(())
 		} else {
@@ -190,53 +220,55 @@ impl Driver {
 	}
 }
 
-macro_rules! alias_func {
+macro_rules! engine_task {
 	($func: ident ($($arg: ident: $type: ty),*)) => {
 		#[future]
 		pub unsafe fn $func(&self, $($arg: $type),*) -> isize {
 			#[cancel]
-			fn cancel(self: &mut Engine) -> Result<()> {
+			fn cancel(self: &Engine) -> Result<()> {
 				/* use this fn to generate the cancel closure type */
 				Ok(())
 			}
 
-			self.inner.as_mut().io_engine.$func($($arg),*).run(request)
+			#[allow(clippy::multiple_unsafe_ops_per_block)]
+			/* Safety: guaranteed by caller */
+			unsafe { self.io_engine.$func($($arg),*).run(request) }
 		}
 	}
 }
 
 impl Driver {
-	alias_func!(open(path: &CStr, flags: u32, mode: u32));
+	engine_task!(open(path: Ptr<()>, flags: u32, mode: u32));
 
-	alias_func!(close(fd: OwnedFd));
+	engine_task!(close(fd: RawFd));
 
-	alias_func!(read(fd: BorrowedFd<'_>, buf: &mut [u8], offset: i64));
+	engine_task!(read(fd: RawFd, buf: MutPtr<()>, len: usize, offset: i64));
 
-	alias_func!(write(fd: BorrowedFd<'_>, buf: &[u8], offset: i64));
+	engine_task!(write(fd: RawFd, buf: Ptr<()>, len: usize, offset: i64));
 
-	alias_func!(socket(domain: u32, socket_type: u32, protocol: u32));
+	engine_task!(socket(domain: u32, sockettype: u32, protocol: u32));
 
-	alias_func!(accept(socket: BorrowedFd<'_>, addr: MutPtr<()>, addrlen: &mut u32));
+	engine_task!(accept(socket: RawFd, addr: MutPtr<()>, addrlen: MutPtr<i32>));
 
-	alias_func!(connect(socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32));
+	engine_task!(connect(socket: RawFd, addr: Ptr<()>, addrlen: i32));
 
-	alias_func!(recv(socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32));
+	engine_task!(recv(socket: RawFd, buf: MutPtr<()>, len: usize, flags: u32));
 
-	alias_func!(recvmsg(socket: BorrowedFd<'_>, header: &mut MessageHeaderMut<'_>, flags: u32));
+	engine_task!(recvmsg(socket: RawFd, header: MutPtr<raw::MsgHdr>, flags: u32));
 
-	alias_func!(send(socket: BorrowedFd<'_>, buf: &[u8], flags: u32));
+	engine_task!(send(socket: RawFd, buf: Ptr<()>, len: usize, flags: u32));
 
-	alias_func!(sendmsg(socket: BorrowedFd<'_>, header: &MessageHeader<'_>, flags: u32));
+	engine_task!(sendmsg(socket: RawFd, header: Ptr<raw::MsgHdr>, flags: u32));
 
-	alias_func!(shutdown(socket: BorrowedFd<'_>, how: Shutdown));
+	engine_task!(shutdown(socket: RawFd, how: u32));
 
-	alias_func!(bind(socket: BorrowedFd<'_>, addr: Ptr<()>, addrlen: u32));
+	engine_task!(bind(socket: RawFd, addr: Ptr<()>, addrlen: i32));
 
-	alias_func!(listen(socket: BorrowedFd<'_>, backlog: i32));
+	engine_task!(listen(socket: RawFd, backlog: i32));
 
-	alias_func!(fsync(file: BorrowedFd<'_>));
+	engine_task!(fsync(file: RawFd));
 
-	alias_func!(statx(dirfd: Option<BorrowedFd<'_>>, path: &CStr, flags: u32, mask: u32, statx: &mut Statx));
+	engine_task!(statx(dirfd: RawFd, path: Ptr<()>, flags: u32, mask: u32, statx: MutPtr<Statx>));
 
-	alias_func!(poll(fd: BorrowedFd<'_>, mask: u32));
+	engine_task!(poll(fd: RawFd, mask: u32));
 }

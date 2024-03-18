@@ -1,13 +1,8 @@
-use std::time::Duration;
-
-use enumflags2::BitFlags;
-use xx_core::error::*;
-
 use super::*;
-use crate::driver::TimeoutFlag;
 
 #[asynchronous]
 pub async fn timeout(expire: u64, flags: BitFlags<TimeoutFlag>) -> Result<()> {
+	/* Safety: driver outlives context */
 	let driver = unsafe { internal_get_driver().await.as_ref() };
 
 	check_interrupt().await?;
@@ -15,6 +10,7 @@ pub async fn timeout(expire: u64, flags: BitFlags<TimeoutFlag>) -> Result<()> {
 }
 
 #[asynchronous]
+#[allow(clippy::unwrap_used)]
 pub async fn sleep(duration: Duration) -> Result<()> {
-	timeout(duration.as_nanos() as u64, BitFlags::default()).await
+	timeout(duration.as_nanos().try_into().unwrap(), BitFlags::default()).await
 }

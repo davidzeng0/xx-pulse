@@ -1,45 +1,59 @@
-use std::cell::Cell;
+#![allow(unreachable_pub)]
+
+use std::{cell::Cell, ptr::addr_of};
 
 use xx_core::{
-	container_of, coroutines::*, error::*, fiber::*, future::block_on::block_on as sync_block_on,
-	opt::hint::*, pointer::*
+	fiber::*,
+	macros::{container_of, unwrap_panic},
+	opt::hint::*,
+	pointer::*
 };
 
-use crate::driver::Driver;
+use super::*;
 
 static mut POOL: Pool = Pool::new();
 
-pub(super) struct Pulse {
+pub struct Pulse {
 	executor: Ptr<Executor>,
 	driver: Ptr<Driver>,
 	context: Context
 }
 
 impl Pulse {
-	fn new(executor: Ptr<Executor>, driver: Ptr<Driver>, worker: Ptr<Worker>) -> Self {
+	/// # Safety
+	/// See `Context::run`
+	/// the executor, driver, and worker must live for self
+	unsafe fn new(executor: Ptr<Executor>, driver: Ptr<Driver>, worker: Ptr<Worker>) -> Self {
 		Self {
 			executor,
 			driver,
-			context: Context::new::<Self>(worker)
+			/* Safety: guaranteed by caller */
+			context: unsafe { Context::new::<Self>(worker) }
 		}
 	}
 
-	pub fn driver(&self) -> Ptr<Driver> {
+	#[must_use]
+	pub const fn driver(&self) -> Ptr<Driver> {
 		self.driver
 	}
 }
 
-impl Environment for Pulse {
+/* Safety: functions don't panic */
+unsafe impl Environment for Pulse {
 	fn context(&self) -> &Context {
 		&self.context
 	}
 
-	fn from_context(context: &Context) -> Ptr<Self> {
-		unsafe { container_of!(Ptr::from(context), Pulse:context) }.cast_const()
+	unsafe fn from_context(context: &Context) -> &Self {
+		let context = container_of!(Ptr::from(context), Self:context);
+
+		/* Safety: guaranteed by caller */
+		unsafe { context.as_ref() }
 	}
 
 	unsafe fn clone(&self, worker: Ptr<Worker>) -> Self {
-		Pulse::new(self.executor(), self.driver, worker)
+		/* Safety: guaranteed by caller */
+		unsafe { Self::new(self.executor(), self.driver, worker) }
 	}
 
 	fn executor(&self) -> Ptr<Executor> {
@@ -56,18 +70,25 @@ impl Runtime {
 	pub fn new() -> Result<Pinned<Box<Self>>> {
 		let runtime = Self {
 			driver: Driver::new()?,
-			executor: unsafe { Executor::new_with_pool(Ptr::from(&POOL)) }
+			#[allow(clippy::multiple_unsafe_ops_per_block)]
+			/* Safety: pool is valid */
+			executor: unsafe { Executor::new_with_pool(addr_of!(POOL).into()) }
 		};
 
 		Ok(runtime.pin_box())
 	}
 
-	pub fn block_on<T: Task>(&mut self, task: T) -> T::Output {
+	pub fn block_on<T>(&mut self, task: T) -> T::Output
+	where
+		T: Task
+	{
+		/* Safety: the env lives until the task finishes */
+		#[allow(clippy::multiple_unsafe_ops_per_block)]
 		let task = unsafe {
 			let driver = Ptr::from(&self.driver);
 			let executor = Ptr::from(&self.executor);
 
-			spawn_future(
+			coroutines::spawn_task(
 				executor,
 				move |worker| Pulse::new(executor, driver, worker),
 				task
@@ -82,7 +103,7 @@ impl Runtime {
 				break;
 			}
 
-			self.driver.park(timeout).unwrap();
+			self.driver.park(timeout);
 
 			if unlikely(!running.get()) {
 				break;
@@ -93,18 +114,21 @@ impl Runtime {
 			running.set(false);
 		};
 
-		unsafe { sync_block_on(block, resume, task) }
+		/* Safety: we are blocked until the future completes */
+		unwrap_panic!(unsafe { block_on(block, resume, task) })
 	}
 }
 
 impl Drop for Runtime {
 	fn drop(&mut self) {
-		self.driver.exit().unwrap();
+		#[allow(clippy::unwrap_used)]
+		self.driver.exit();
 	}
 }
 
-unsafe impl Pin for Runtime {
+impl Pin for Runtime {
 	unsafe fn pin(&mut self) {
-		self.executor.pin();
+		/* Safety: we are being pinned */
+		unsafe { self.executor.pin() };
 	}
 }

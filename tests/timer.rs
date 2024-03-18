@@ -1,6 +1,5 @@
 use std::time::{Duration, Instant};
 
-use enumflags2::BitFlags;
 use xx_core::error::Result;
 use xx_pulse::*;
 
@@ -8,7 +7,7 @@ use xx_pulse::*;
 #[test]
 async fn test_timers() -> Result<()> {
 	let start = Instant::now();
-	let mut timer = Timer::new(Duration::from_secs(1), BitFlags::default());
+	let mut timer = Interval::new(Duration::from_secs(1));
 
 	for _ in 0..5 {
 		timer.next().await?;

@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 use std::{cell::Cell, io::SeekFrom, path::Path};
 
 use xx_core::os::{
@@ -14,8 +16,9 @@ pub struct File {
 
 #[asynchronous]
 impl File {
-	pub async fn open(path: impl AsRef<Path>) -> Result<File> {
-		Ok(File {
+	#[allow(clippy::impl_trait_in_params)]
+	pub async fn open(path: impl AsRef<Path>) -> Result<Self> {
+		Ok(Self {
 			fd: open(path.as_ref(), OpenFlag::ReadOnly, 0).await?,
 			offset: Cell::new(0)
 		})
@@ -25,9 +28,10 @@ impl File {
 		read_into!(buf);
 
 		let offset = self.offset.get();
-		let read = read(self.fd.as_fd(), buf, offset as i64).await?;
+		let read = read(self.fd.as_fd(), buf, offset.try_into().unwrap()).await?;
 		let read = check_interrupt_if_zero(read).await?;
 
+		#[allow(clippy::arithmetic_side_effects)]
 		self.offset.set(offset + read as u64);
 
 		Ok(read)
@@ -37,9 +41,10 @@ impl File {
 		write_from!(buf);
 
 		let offset = self.offset.get();
-		let wrote = write(self.fd.as_fd(), buf, offset as i64).await?;
+		let wrote = write(self.fd.as_fd(), buf, offset.try_into().unwrap()).await?;
 		let wrote = check_interrupt_if_zero(wrote).await?;
 
+		#[allow(clippy::arithmetic_side_effects)]
 		self.offset.set(offset + wrote as u64);
 
 		Ok(wrote)
@@ -129,4 +134,5 @@ impl Seek for File {
 	}
 }
 
+/* Safety: read and write are separate */
 unsafe impl SimpleSplit for File {}
