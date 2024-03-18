@@ -5,7 +5,7 @@ RUN apt update && \
 	apt clean
 
 RUN cargo install cargo-valgrind cargo-llvm-cov
-RUN rustup default nightly && \
+RUN rustup default nightly-2024-02-10 && \
 	rustup component add clippy && \
 	rustup default stable
 

@@ -35,7 +35,7 @@ jobs:
           echo ARGS=\"\$@\"\; docker run --rm -e VALGRINDFLAGS=\"$VALGRINDFLAGS\" -v .:/base rust \"\$ARGS\" > ./docker_run
           chmod +x ./docker_run
       - name: Check & Lint
-        run: ./docker_run RUSTFLAGS=\"-D warnings --cfg tracing --cfg tracing-ext\" cargo +nightly clippy
+        run: ./docker_run RUSTFLAGS=\"-D warnings --features tracing,tracing-ext\" cargo +nightly clippy
       - name: Test debug build
         run: ./docker_run cd tests \&\& cargo test \&\& cargo valgrind test
       - name: Test release build
