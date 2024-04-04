@@ -4,7 +4,7 @@ use std::{collections::BTreeSet, os::fd::RawFd};
 
 use enumflags2::*;
 use xx_core::{
-	macros::{abort, duration},
+	macros::{duration, panic_nounwind},
 	opt::hint::*,
 	os::{
 		socket::raw,
@@ -29,12 +29,14 @@ struct Timeout {
 	request: ReqPtr<Result<()>>
 }
 
-#[compact_error]
-#[allow(clippy::module_name_repetitions)]
+#[allow(clippy::module_name_repetitions, missing_copy_implementations)]
+#[errors]
 pub enum DriverError {
-	Shutdown       = (ErrorKind::Other, "Driver is shutting down"),
-	TimerCancelled = (ErrorKind::Interrupted, "Timer cancelled"),
-	TimerNotFound  = (ErrorKind::NotFound, "Timer not found")
+	#[error("Driver is shutting down")]
+	Shutdown,
+
+	#[error("Timer not found")]
+	TimerNotFound
 }
 
 struct DriverInner {
@@ -64,11 +66,10 @@ impl Driver {
 	fn time_or_abort() -> u64 {
 		match Self::try_time() {
 			Ok(time) => time,
-			Err(err) => abort!("Failed to read the clock: {:?}", err)
+			Err(err) => panic_nounwind!("Failed to read the clock: {:?}", err)
 		}
 	}
 
-	#[inline(always)]
 	#[allow(clippy::expect_used)]
 	pub fn time() -> u64 {
 		Self::try_time().expect("Failed to read the clock")
@@ -89,21 +90,21 @@ impl Driver {
 
 	fn queue_timer(&self, timer: Timeout) {
 		/* Safety: exclusive unsafe cell access */
-		unsafe { self.inner.as_mut().timers.insert(timer) };
+		unsafe { ptr!(self.inner=>timers.insert(timer)) };
 	}
 
 	fn cancel_timer(&self, timer: Timeout) -> Result<()> {
 		/* Safety: we have exclusive mutable access until expire */
-		let timeout = match unsafe { self.inner.as_mut().timers.take(&timer) } {
+		let timeout = match unsafe { ptr!(self.inner=>timers.take(&timer)) } {
 			Some(timeout) => timeout,
-			None => return Err(DriverError::TimerNotFound.as_err())
+			None => return Err(DriverError::TimerNotFound.into())
 		};
 
 		#[cfg(feature = "tracing-ext")]
 		xx_core::trace!(target: self, "## cancel_timer(request = {:?}) = Ok(reason = cancel)", timeout.request);
 
 		/* Safety: complete the future */
-		unsafe { Self::timer_complete(timeout, Err(DriverError::TimerCancelled.as_err())) };
+		unsafe { Self::timer_complete(timeout, Err(Core::Interrupted("Timer cancelled").into())) };
 
 		Ok(())
 	}
@@ -140,7 +141,7 @@ impl Driver {
 
 		loop {
 			/* Safety: we have mutable access until expire */
-			let timers = unsafe { &mut self.inner.as_mut().timers };
+			let timers = unsafe { &mut ptr!(self.inner=>timers) };
 			let timer = match timers.first() {
 				None => break,
 				Some(timer) => timer
@@ -168,31 +169,26 @@ impl Driver {
 	}
 
 	#[inline(always)]
-	fn work(&self, timeout: u64) {
+	pub fn park(&self, timeout: u64) {
 		match self.io_engine.work(timeout) {
 			Ok(()) => (),
-			Err(err) => abort!("Fatal error from engine: {:?}", err)
+			Err(err) => panic_nounwind!("Fatal error from engine: {:?}", err)
 		}
-	}
-
-	#[inline(always)]
-	pub fn park(&self, timeout: u64) {
-		self.work(timeout);
 	}
 
 	pub fn exit(&self) {
 		/* Safety: exclusive unsafe cell access */
-		unsafe { self.inner.as_mut().exiting = true };
+		unsafe { ptr!(self.inner=>exiting = true) };
 
 		loop {
 			/* Safety: we have exclusive access until expire */
-			let timers = unsafe { &mut self.inner.as_mut().timers };
+			let timers = unsafe { &mut ptr!(self.inner=>timers) };
 
 			if timers.is_empty() {
 				break;
 			}
 
-			Self::expire_first_timer(timers, Err(DriverError::Shutdown.as_err()));
+			Self::expire_first_timer(timers, Err(DriverError::Shutdown.into()));
 		}
 
 		loop {
@@ -202,11 +198,11 @@ impl Driver {
 				break;
 			}
 
-			self.work(timeout);
+			self.park(timeout);
 		}
 
 		/* Safety: exclusive unsafe cell access */
-		unsafe { self.inner.as_mut().exiting = false };
+		unsafe { ptr!(self.inner=>exiting = false) };
 	}
 
 	#[inline(always)]
@@ -215,7 +211,7 @@ impl Driver {
 		if likely(!unsafe { self.inner.as_ref().exiting }) {
 			Ok(())
 		} else {
-			Err(DriverError::Shutdown.as_err())
+			Err(DriverError::Shutdown.into())
 		}
 	}
 }

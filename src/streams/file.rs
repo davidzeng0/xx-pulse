@@ -2,8 +2,9 @@
 
 use std::{cell::Cell, io::SeekFrom, path::Path};
 
+use io::*;
 use xx_core::os::{
-	fcntl::{AtFlag, OpenFlag},
+	fcntl::AtFlag,
 	stat::{Statx, StatxMask}
 };
 
@@ -19,7 +20,7 @@ impl File {
 	#[allow(clippy::impl_trait_in_params)]
 	pub async fn open(path: impl AsRef<Path>) -> Result<Self> {
 		Ok(Self {
-			fd: open(path.as_ref(), OpenFlag::ReadOnly, 0).await?,
+			fd: open(path.as_ref(), BitFlags::default(), 0).await?,
 			offset: Cell::new(0)
 		})
 	}
@@ -61,7 +62,7 @@ impl File {
 				.offset
 				.get()
 				.checked_add_signed(rel)
-				.ok_or_else(|| Core::Overflow.as_err())?,
+				.ok_or(Core::Overflow)?,
 			SeekFrom::End(rel) => self.stream_len().await?.checked_add_signed(rel).unwrap()
 		};
 
@@ -109,8 +110,8 @@ impl Seek for File {
 		statx(
 			Some(self.fd.as_fd()),
 			"".as_ref(),
-			AtFlag::EmptyPath as u32,
-			0,
+			AtFlag::EmptyPath.into(),
+			BitFlags::default(),
 			&mut stat
 		)
 		.await?;
@@ -118,10 +119,7 @@ impl Seek for File {
 		if stat.mask().intersects(StatxMask::Size) {
 			Ok(stat.size)
 		} else {
-			Err(Error::simple(
-				ErrorKind::Other,
-				Some("Failed to query file size")
-			))
+			Err(fmt_error!("Failed to query file size"))
 		}
 	}
 
@@ -133,6 +131,3 @@ impl Seek for File {
 		Ok(self.pos())
 	}
 }
-
-/* Safety: read and write are separate */
-unsafe impl SimpleSplit for File {}

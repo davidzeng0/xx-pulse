@@ -11,7 +11,7 @@ use std::{
 use paste::paste;
 use xx_core::{
 	error::*,
-	os::{inet::Address, openat::OpenAt, socket::*, stat::Statx},
+	os::{epoll::*, fcntl::*, inet::*, openat::*, socket::*, stat::*},
 	pointer::*
 };
 
@@ -21,19 +21,14 @@ pub mod raw {
 	use xx_core::os::socket::raw::MsgHdr;
 
 	use super::*;
-	#[cfg(feature = "tracing")]
-	mod tracing {
-		#![allow(unreachable_pub)]
 
+	#[cfg(feature = "tracing")]
+	#[allow(unreachable_pub)]
+	mod tracing {
 		use std::{fmt, marker::PhantomData};
 
 		use enumflags2::*;
-		pub use xx_core::{
-			num_traits::FromPrimitive,
-			os::{fcntl::*, inet::*, poll::*, stat::*}
-		};
-
-		use super::*;
+		pub use xx_core::{num_traits::FromPrimitive, pointer::*};
 
 		pub unsafe fn get_cstr_as_str<'a>(cstr: Ptr<()>) -> &'a str {
 			/* Safety: guaranteed by caller */
@@ -124,7 +119,7 @@ pub mod raw {
 				#[cfg(feature = "tracing")]
 				xx_core::trace!(target: driver, $($trace)*, $result $($map)*);
 
-				$result
+				$result.map_err(|err| err.into())
 			}
 		}
 	}
@@ -154,7 +149,7 @@ pub mod raw {
 	async_engine_task!(false, socket(domain: u32, socket_type: u32, protocol: u32) -> Result<OwnedFd> {
 		trace(
 			"## socket(domain = {}, socket_type = {}, protocol = {}) = {:?}",
-			EnumDisplay::<ProtocolFamily>::new(domain),
+			EnumDisplay::<AddressFamily>::new(domain),
 			EnumDisplay::<SocketType>::new(socket_type),
 			EnumDisplay::<IpProtocol>::new(protocol)
 		) = result
@@ -240,15 +235,15 @@ pub mod raw {
 }
 
 fn path_to_cstr(path: &Path) -> Result<CString> {
-	CString::new(path.as_os_str().as_bytes()).map_err(|_| Core::InvalidCStr.as_err())
+	CString::new(path.as_os_str().as_bytes()).map_err(|_| Core::InvalidCStr.into())
 }
 
 #[asynchronous]
-pub async fn open(path: &Path, flags: u32, mode: u32) -> Result<OwnedFd> {
+pub async fn open(path: &Path, flags: BitFlags<OpenFlag>, mode: u32) -> Result<OwnedFd> {
 	let path = path_to_cstr(path)?;
 
 	/* Safety: lifetimes captured by this function are valid until it returns */
-	unsafe { raw::open(Ptr::from(path.as_ptr()).cast(), flags, mode).await }
+	unsafe { raw::open(ptr!(path.as_ptr()).cast(), flags.bits(), mode).await }
 }
 
 #[asynchronous]
@@ -263,7 +258,7 @@ pub async fn read(fd: BorrowedFd<'_>, buf: &mut [u8], offset: i64) -> Result<usi
 	unsafe {
 		raw::read(
 			fd.as_raw_fd(),
-			MutPtr::from(buf.as_mut_ptr()).cast(),
+			ptr!(buf.as_mut_ptr()).cast(),
 			buf.len(),
 			offset
 		)
@@ -274,21 +269,15 @@ pub async fn read(fd: BorrowedFd<'_>, buf: &mut [u8], offset: i64) -> Result<usi
 #[asynchronous]
 pub async fn write(fd: BorrowedFd<'_>, buf: &[u8], offset: i64) -> Result<usize> {
 	/* Safety: lifetimes captured by this function are valid until it returns */
-	unsafe {
-		raw::write(
-			fd.as_raw_fd(),
-			Ptr::from(buf.as_ptr()).cast(),
-			buf.len(),
-			offset
-		)
-		.await
-	}
+	unsafe { raw::write(fd.as_raw_fd(), ptr!(buf.as_ptr()).cast(), buf.len(), offset).await }
 }
 
 #[asynchronous]
-pub async fn socket(domain: u32, socket_type: u32, protocol: u32) -> Result<OwnedFd> {
+pub async fn socket(
+	domain: AddressFamily, socket_type: u32, protocol: IpProtocol
+) -> Result<OwnedFd> {
 	/* Safety: lifetimes captured by this function are valid until it returns */
-	unsafe { raw::socket(domain, socket_type, protocol).await }
+	unsafe { raw::socket(domain as u32, socket_type, protocol as u32).await }
 }
 
 #[asynchronous]
@@ -297,14 +286,8 @@ pub async fn accept<A>(socket: BorrowedFd<'_>, addr: &mut A) -> Result<(OwnedFd,
 	let mut addrlen = size_of::<A>().try_into().unwrap();
 
 	/* Safety: lifetimes captured by this function are valid until it returns */
-	let fd = unsafe {
-		raw::accept(
-			socket.as_raw_fd(),
-			MutPtr::from(addr).as_unit(),
-			MutPtr::from(&mut addrlen)
-		)
-		.await?
-	};
+	let fd =
+		unsafe { raw::accept(socket.as_raw_fd(), ptr!(addr).cast(), ptr!(&mut addrlen)).await? };
 
 	Ok((fd, addrlen))
 }
@@ -316,7 +299,7 @@ pub async fn connect<A>(socket: BorrowedFd<'_>, addr: &A) -> Result<()> {
 	unsafe {
 		raw::connect(
 			socket.as_raw_fd(),
-			Ptr::from(addr).as_unit(),
+			ptr!(addr).cast(),
 			size_of::<A>().try_into().unwrap()
 		)
 		.await
@@ -332,14 +315,16 @@ pub async fn connect_addr(socket: BorrowedFd<'_>, addr: &Address) -> Result<()> 
 }
 
 #[asynchronous]
-pub async fn recv(socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32) -> Result<usize> {
+pub async fn recv(
+	socket: BorrowedFd<'_>, buf: &mut [u8], flags: BitFlags<MessageFlag>
+) -> Result<usize> {
 	/* Safety: lifetimes captured by this function are valid until it returns */
 	unsafe {
 		raw::recv(
 			socket.as_raw_fd(),
-			MutPtr::from(buf.as_mut_ptr()).cast(),
+			ptr!(buf.as_mut_ptr()).cast(),
 			buf.len(),
-			flags
+			flags.bits()
 		)
 		.await
 	}
@@ -347,30 +332,34 @@ pub async fn recv(socket: BorrowedFd<'_>, buf: &mut [u8], flags: u32) -> Result<
 
 #[asynchronous]
 pub async fn recvmsg(
-	socket: BorrowedFd<'_>, header: &mut MsgHdrMut<'_>, flags: u32
+	socket: BorrowedFd<'_>, header: &mut MsgHdrMut<'_>, flags: BitFlags<MessageFlag>
 ) -> Result<usize> {
 	/* Safety: lifetimes captured by this function are valid until it returns */
-	unsafe { raw::recvmsg(socket.as_raw_fd(), MutPtr::from(header).cast(), flags).await }
+	unsafe { raw::recvmsg(socket.as_raw_fd(), ptr!(header).cast(), flags.bits()).await }
 }
 
 #[asynchronous]
-pub async fn send(socket: BorrowedFd<'_>, buf: &[u8], flags: u32) -> Result<usize> {
+pub async fn send(
+	socket: BorrowedFd<'_>, buf: &[u8], flags: BitFlags<MessageFlag>
+) -> Result<usize> {
 	/* Safety: lifetimes captured by this function are valid until it returns */
 	unsafe {
 		raw::send(
 			socket.as_raw_fd(),
-			Ptr::from(buf.as_ptr()).cast(),
+			ptr!(buf.as_ptr()).cast(),
 			buf.len(),
-			flags
+			flags.bits()
 		)
 		.await
 	}
 }
 
 #[asynchronous]
-pub async fn sendmsg(socket: BorrowedFd<'_>, header: &MsgHdr<'_>, flags: u32) -> Result<usize> {
+pub async fn sendmsg(
+	socket: BorrowedFd<'_>, header: &MsgHdr<'_>, flags: BitFlags<MessageFlag>
+) -> Result<usize> {
 	/* Safety: lifetimes captured by this function are valid until it returns */
-	unsafe { raw::sendmsg(socket.as_raw_fd(), Ptr::from(header).cast(), flags).await }
+	unsafe { raw::sendmsg(socket.as_raw_fd(), ptr!(header).cast(), flags.bits()).await }
 }
 
 #[asynchronous]
@@ -386,7 +375,7 @@ pub async fn bind<A>(socket: BorrowedFd<'_>, addr: &A) -> Result<()> {
 	unsafe {
 		raw::bind(
 			socket.as_raw_fd(),
-			Ptr::from(addr).as_unit(),
+			ptr!(addr).cast(),
 			size_of::<A>().try_into().unwrap()
 		)
 		.await
@@ -415,7 +404,8 @@ pub async fn fsync(file: BorrowedFd<'_>) -> Result<()> {
 
 #[asynchronous]
 pub async fn statx(
-	dirfd: Option<BorrowedFd<'_>>, path: &Path, flags: u32, mask: u32, statx: &mut Statx
+	dirfd: Option<BorrowedFd<'_>>, path: &Path, flags: BitFlags<AtFlag>, mask: BitFlags<StatxMask>,
+	statx: &mut Statx
 ) -> Result<()> {
 	let dirfd = dirfd.map_or(OpenAt::CurrentWorkingDirectory as i32, |fd| fd.as_raw_fd());
 	let path = path_to_cstr(path)?;
@@ -424,9 +414,9 @@ pub async fn statx(
 	unsafe {
 		raw::statx(
 			dirfd,
-			Ptr::from(path.as_ptr()).cast(),
-			flags,
-			mask,
+			ptr!(path.as_ptr()).cast(),
+			flags.bits(),
+			mask.bits(),
 			statx.into()
 		)
 		.await
@@ -434,7 +424,9 @@ pub async fn statx(
 }
 
 #[asynchronous]
-pub async fn poll(fd: BorrowedFd<'_>, mask: u32) -> Result<u32> {
+pub async fn poll(fd: BorrowedFd<'_>, mask: BitFlags<PollFlag>) -> Result<BitFlags<PollFlag>> {
 	/* Safety: lifetimes captured by this function are valid until it returns */
-	unsafe { raw::poll(fd.as_raw_fd(), mask).await }
+	let bits = unsafe { raw::poll(fd.as_raw_fd(), mask.bits()).await? };
+
+	Ok(BitFlags::from_bits_truncate(bits))
 }

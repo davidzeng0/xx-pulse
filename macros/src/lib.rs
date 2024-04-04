@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use quote::ToTokens;
 use syn::{visit_mut::VisitMut, *};
-use xx_macro_support::macro_expr::visit_macro_punctuated_exprs;
+use xx_macro_support::visit_macro::visit_macro_body;
 
 struct HasAwait(bool);
 
@@ -15,7 +15,7 @@ impl VisitMut for HasAwait {
 	}
 
 	fn visit_macro_mut(&mut self, mac: &mut Macro) {
-		visit_macro_punctuated_exprs(self, mac);
+		visit_macro_body(self, mac);
 	}
 }
 

@@ -296,7 +296,7 @@ impl Op {
 		rw(
 			&mut entry,
 			0,
-			Ptr::from(timespec).int_addr() as u64,
+			ptr!(timespec).int_addr() as u64,
 			1,
 			count as u64,
 			flags

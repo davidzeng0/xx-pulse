@@ -4,16 +4,16 @@ use xx_pulse::*;
 #[main]
 #[test]
 async fn test_udp() -> Result<()> {
-	let server = Udp::bind("0.0.0.0:0").await?;
-	let client = Udp::connect(server.local_addr().await?).await?;
+	let mut server = Udp::bind("0.0.0.0:0").await?;
+	let mut client = Udp::connect(server.local_addr().await?).await?;
 
 	let mut buf = [0u8; 1];
 
 	for i in 0..10 {
 		buf[0] = i;
-		client.send(&buf, 0).await?;
+		client.send(&buf, Default::default()).await?;
 		buf[0] = 255;
-		server.recv(&mut buf, 0).await?;
+		server.recv(&mut buf, Default::default()).await?;
 
 		assert!(buf[0] == i);
 	}
@@ -25,7 +25,7 @@ async fn test_udp() -> Result<()> {
 #[test]
 async fn test_tcp() -> Result<()> {
 	let listener = Tcp::bind("0.0.0.0:0").await?;
-	let Join((server, addr), client) = join(
+	let Join((mut server, addr), mut client) = join(
 		listener.accept(),
 		Tcp::connect(listener.local_addr().await?)
 	)
@@ -40,9 +40,9 @@ async fn test_tcp() -> Result<()> {
 
 	for i in 0..10 {
 		buf[0] = i;
-		client.send(&buf, 0).await?;
+		client.send(&buf, Default::default()).await?;
 		buf[0] = 255;
-		server.recv(&mut buf, 0).await?;
+		server.recv(&mut buf, Default::default()).await?;
 
 		assert!(buf[0] == i);
 	}

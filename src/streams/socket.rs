@@ -3,32 +3,35 @@
 use std::net::{SocketAddr, ToSocketAddrs};
 
 use xx_core::{
-	impls::AsyncFn1,
-	macros::wrapper_functions,
-	os::{inet::*, poll::PollFlag, socket::*},
-	read_wrapper, write_wrapper
+	async_std::io::*,
+	coroutines::acquire_budget,
+	impls::{AsyncFn, AsyncFnOnce},
+	macros::*,
+	os::{epoll::PollFlag, error::OsError, inet::*, socket::*}
 };
 
 use super::*;
 
 #[asynchronous]
-async fn foreach_addr<A: ToSocketAddrs, F: AsyncFn1<Address, Output = Result<Output>>, Output>(
-	addrs: A, f: F
-) -> Result<Output> {
+async fn foreach_addr<A, F, Output>(addrs: A, f: F) -> Result<Output>
+where
+	A: ToSocketAddrs,
+	F: AsyncFn<Address, Output = Result<Output>>
+{
 	let mut error = None;
 
 	for addr in addrs.to_socket_addrs()? {
-		match f(addr.into()).await {
+		match f.call(addr.into()).await {
 			Ok(out) => return Ok(out),
 			Err(err) => error = Some(err)
 		}
 	}
 
-	Err(error.unwrap_or_else(|| Core::NoAddresses.as_err()))
+	Err(error.unwrap_or_else(|| Core::NoAddresses.into()))
 }
 
 #[asynchronous]
-async fn bind_addr<A>(addr: A, socket_type: u32, protocol: u32) -> Result<Socket>
+async fn bind_addr<A>(addr: A, socket_type: u32, protocol: IpProtocol) -> Result<Socket>
 where
 	A: ToSocketAddrs
 {
@@ -36,7 +39,7 @@ where
 		let sock = Socket::new_for_addr(&addr, socket_type, protocol).await?;
 
 		set_reuse_addr(sock.fd(), true)?;
-		ops::bind_addr(sock.fd(), &addr).await?;
+		io::bind_addr(sock.fd(), &addr).await?;
 
 		Ok(sock)
 	})
@@ -44,7 +47,7 @@ where
 }
 
 #[asynchronous]
-async fn connect_addrs<A>(addr: A, socket_type: u32, protocol: u32) -> Result<Socket>
+async fn connect_addrs<A>(addr: A, socket_type: u32, protocol: IpProtocol) -> Result<Socket>
 where
 	A: ToSocketAddrs
 {
@@ -65,21 +68,51 @@ fn convert_addr(storage: AddressStorage) -> SocketAddr {
 }
 
 pub struct Socket {
-	fd: OwnedFd
+	fd: OwnedFd,
+	ready: BitFlags<PollFlag>
+}
+
+#[asynchronous]
+async fn with_budget<T, U, Sync, Suspend>(
+	socket: &mut Socket, mut data: T, flags: BitFlags<PollFlag>, sync: Sync, suspend: Suspend
+) -> Result<U>
+where
+	Sync: FnOnce(BorrowedFd<'_>, &mut T) -> OsResult<U>,
+	Suspend: for<'a, 'b> AsyncFnOnce<(BorrowedFd<'a>, &'b mut T), Output = Result<U>>
+{
+	if socket.ready.contains(flags) && acquire_budget(None).await {
+		match sync(socket.fd(), &mut data) {
+			Ok(result) => return Ok(result),
+			Err(OsError::WouldBlock) => socket.ready.remove(flags),
+			Err(err) => return Err(err.into())
+		}
+	}
+
+	let result = suspend.call_once((socket.fd(), &mut data)).await;
+
+	if result.is_ok() {
+		socket.ready.insert(flags);
+	}
+
+	result
 }
 
 #[asynchronous]
 impl Socket {
-	pub async fn new(domain: u32, socket_type: u32, protocol: u32) -> Result<Self> {
-		let fd = ops::socket(domain, socket_type, protocol).await?;
+	pub async fn new(
+		domain: AddressFamily, socket_type: u32, protocol: IpProtocol
+	) -> Result<Self> {
+		let fd = io::socket(domain, socket_type, protocol).await?;
 
-		Ok(Self { fd })
+		Ok(Self { fd, ready: BitFlags::default() })
 	}
 
-	pub async fn new_for_addr(addr: &Address, socket_type: u32, protocol: u32) -> Result<Self> {
+	pub async fn new_for_addr(
+		addr: &Address, socket_type: u32, protocol: IpProtocol
+	) -> Result<Self> {
 		match addr {
-			Address::V4(_) => Self::new(AddressFamily::INet as u32, socket_type, protocol),
-			Address::V6(_) => Self::new(AddressFamily::INet6 as u32, socket_type, protocol)
+			Address::V4(_) => Self::new(AddressFamily::INet, socket_type, protocol),
+			Address::V6(_) => Self::new(AddressFamily::INet6, socket_type, protocol)
 		}
 		.await
 	}
@@ -90,22 +123,34 @@ impl Socket {
 	}
 
 	pub async fn close(self) -> Result<()> {
-		close(self.fd).await
+		io::close(self.fd).await
 	}
 
 	pub async fn connect(&self, addr: &Address) -> Result<()> {
-		ops::connect_addr(self.fd(), addr).await
+		io::connect_addr(self.fd(), addr).await
 	}
 
-	pub async fn recv(&self, buf: &mut [u8], flags: u32) -> Result<usize> {
+	pub async fn recv(&mut self, buf: &mut [u8], flags: BitFlags<MessageFlag>) -> Result<usize> {
 		read_into!(buf);
 
-		let read = ops::recv(self.fd(), buf, flags).await?;
-
-		check_interrupt_if_zero(read).await
+		with_budget(
+			self,
+			buf,
+			PollFlag::In.into(),
+			|fd: BorrowedFd<'_>, buf: &mut &mut [u8]| {
+				/* Safety: buf is valid */
+				unsafe { recv(fd, (*buf).into(), flags | MessageFlag::DontWait) }
+			},
+			|fd: BorrowedFd<'_>, buf: &mut &mut [u8]| async move {
+				check_interrupt_if_zero(io::recv(fd, buf, flags).await?).await
+			}
+		)
+		.await
 	}
 
-	pub async fn recv_vectored(&self, bufs: &mut [IoSliceMut<'_>], flags: u32) -> Result<usize> {
+	pub async fn recv_vectored(
+		&mut self, bufs: &mut [IoSliceMut<'_>], flags: BitFlags<MessageFlag>
+	) -> Result<usize> {
 		let mut header = MsgHdrMut::default();
 
 		header.set_vecs(IoVecMut::from_io_slices_mut(bufs));
@@ -113,27 +158,61 @@ impl Socket {
 		self.recvmsg(&mut header, flags).await
 	}
 
-	pub async fn recvmsg(&self, header: &mut MsgHdrMut<'_>, flags: u32) -> Result<usize> {
-		let read = recvmsg(self.fd(), header, flags).await?;
-
-		check_interrupt_if_zero(read).await
+	pub async fn recvmsg(
+		&mut self, header: &mut MsgHdrMut<'_>, flags: BitFlags<MessageFlag>
+	) -> Result<usize> {
+		with_budget(
+			self,
+			header,
+			PollFlag::In.into(),
+			|fd: BorrowedFd<'_>, buf: &mut &mut MsgHdrMut<'_>| {
+				recvmsg(fd, buf, flags | MessageFlag::DontWait)
+			},
+			|fd: BorrowedFd<'_>, buf: &mut &mut MsgHdrMut<'_>| async move {
+				check_interrupt_if_zero(io::recvmsg(fd, buf, flags).await?).await
+			}
+		)
+		.await
 	}
 
-	pub async fn send(&self, buf: &[u8], flags: u32) -> Result<usize> {
+	pub async fn send(&mut self, buf: &[u8], flags: BitFlags<MessageFlag>) -> Result<usize> {
 		write_from!(buf);
 
-		let wrote = ops::send(self.fd(), buf, flags).await?;
-
-		check_interrupt_if_zero(wrote).await
+		with_budget(
+			self,
+			buf,
+			PollFlag::Out.into(),
+			|fd: BorrowedFd<'_>, buf: &mut &[u8]| {
+				/* Safety: buf is valid */
+				unsafe { send(fd, (*buf).into(), flags | MessageFlag::DontWait) }
+			},
+			|fd: BorrowedFd<'_>, buf: &mut &[u8]| async move {
+				check_interrupt_if_zero(io::send(fd, buf, flags).await?).await
+			}
+		)
+		.await
 	}
 
-	pub async fn sendmsg(&self, header: &MsgHdr<'_>, flags: u32) -> Result<usize> {
-		let wrote = sendmsg(self.fd(), header, flags).await?;
-
-		check_interrupt_if_zero(wrote).await
+	pub async fn sendmsg(
+		&mut self, header: &MsgHdr<'_>, flags: BitFlags<MessageFlag>
+	) -> Result<usize> {
+		with_budget(
+			self,
+			header,
+			PollFlag::Out.into(),
+			|fd: BorrowedFd<'_>, buf: &mut &MsgHdr<'_>| {
+				sendmsg(fd, buf, flags | MessageFlag::DontWait)
+			},
+			|fd: BorrowedFd<'_>, buf: &mut &MsgHdr<'_>| async move {
+				check_interrupt_if_zero(io::sendmsg(fd, buf, flags).await?).await
+			}
+		)
+		.await
 	}
 
-	pub async fn send_vectored(&self, bufs: &[IoSlice<'_>], flags: u32) -> Result<usize> {
+	pub async fn send_vectored(
+		&mut self, bufs: &[IoSlice<'_>], flags: BitFlags<MessageFlag>
+	) -> Result<usize> {
 		let mut header = MsgHdr::default();
 
 		header.set_vecs(IoVec::from_io_slices(bufs));
@@ -141,7 +220,9 @@ impl Socket {
 		self.sendmsg(&header, flags).await
 	}
 
-	pub async fn recvfrom(&self, buf: &mut [u8], flags: u32) -> Result<(usize, SocketAddr)> {
+	pub async fn recvfrom(
+		&mut self, buf: &mut [u8], flags: BitFlags<MessageFlag>
+	) -> Result<(usize, SocketAddr)> {
 		let mut addr = AddressStorage::default();
 		let mut vecs = [IoVecMut::from(buf)];
 		let mut header = MsgHdrMut::default();
@@ -154,7 +235,9 @@ impl Socket {
 		Ok((recvd, convert_addr(addr)))
 	}
 
-	pub async fn sendto(&self, buf: &[u8], flags: u32, addr: &SocketAddr) -> Result<usize> {
+	pub async fn sendto(
+		&mut self, buf: &[u8], flags: BitFlags<MessageFlag>, addr: &SocketAddr
+	) -> Result<usize> {
 		write_from!(buf);
 
 		let mut header = MsgHdr::default();
@@ -171,30 +254,38 @@ impl Socket {
 		self.sendmsg(&header, flags).await
 	}
 
-	pub async fn poll(&self, flags: BitFlags<PollFlag>) -> Result<BitFlags<PollFlag>> {
-		let bits = poll(self.fd(), flags.bits()).await?;
+	pub async fn poll(&mut self, flags: BitFlags<PollFlag>) -> Result<BitFlags<PollFlag>> {
+		let result = io::poll(self.fd(), flags).await?;
+		let flags = PollFlag::In | PollFlag::Out;
 
-		Ok(BitFlags::from_bits_truncate(bits))
+		self.ready.remove(flags);
+		self.ready.insert(result & flags);
+
+		Ok(flags)
 	}
 
-	pub async fn shutdown(&self, how: Shutdown) -> Result<()> {
-		ops::shutdown(self.fd(), how).await
+	pub async fn shutdown(&mut self, how: Shutdown) -> Result<()> {
+		io::shutdown(self.fd(), how).await?;
+
+		self.ready.insert(PollFlag::In | PollFlag::Out);
+
+		Ok(())
 	}
 
 	pub async fn set_recvbuf_size(&self, size: i32) -> Result<()> {
-		set_recvbuf_size(self.fd(), size)
+		set_recvbuf_size(self.fd(), size).map_err(Into::into)
 	}
 
 	pub async fn set_sendbuf_size(&self, size: i32) -> Result<()> {
-		set_sendbuf_size(self.fd(), size)
+		set_sendbuf_size(self.fd(), size).map_err(Into::into)
 	}
 
 	pub async fn set_tcp_nodelay(&self, enable: bool) -> Result<()> {
-		set_tcp_nodelay(self.fd(), enable)
+		set_tcp_nodelay(self.fd(), enable).map_err(Into::into)
 	}
 
 	pub async fn set_tcp_keepalive(&self, enable: bool, idle: i32) -> Result<()> {
-		set_tcp_keepalive(self.fd(), enable, idle)
+		set_tcp_keepalive(self.fd(), enable, idle).map_err(Into::into)
 	}
 
 	pub async fn local_addr(&self) -> Result<SocketAddr> {
@@ -217,7 +308,7 @@ impl Socket {
 #[asynchronous]
 impl Read for Socket {
 	async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-		self.recv(buf, 0).await
+		self.recv(buf, BitFlags::default()).await
 	}
 
 	fn is_read_vectored(&self) -> bool {
@@ -225,14 +316,14 @@ impl Read for Socket {
 	}
 
 	async fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize> {
-		self.recv_vectored(bufs, 0).await
+		self.recv_vectored(bufs, BitFlags::default()).await
 	}
 }
 
 #[asynchronous]
 impl Write for Socket {
 	async fn write(&mut self, buf: &[u8]) -> Result<usize> {
-		self.send(buf, 0).await
+		self.send(buf, BitFlags::default()).await
 	}
 
 	async fn flush(&mut self) -> Result<()> {
@@ -245,16 +336,13 @@ impl Write for Socket {
 	}
 
 	async fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> Result<usize> {
-		self.send_vectored(bufs, 0).await
+		self.send_vectored(bufs, BitFlags::default()).await
 	}
 }
 
-/* Safety: sockets don't have any mutable state in rust land */
-unsafe impl SimpleSplit for Socket {}
-
 impl From<OwnedFd> for Socket {
 	fn from(fd: OwnedFd) -> Self {
-		Self { fd }
+		Self { fd, ready: BitFlags::default() }
 	}
 }
 
@@ -271,34 +359,34 @@ macro_rules! socket_common {
 			pub async fn close(self) -> Result<()>;
 
 			#[asynchronous]
-			pub async fn recv(&self, buf: &mut [u8], flags: u32) -> Result<usize>;
+			pub async fn recv(&mut self, buf: &mut [u8], flags: BitFlags<MessageFlag>) -> Result<usize>;
 
 			#[asynchronous]
-			pub async fn recv_vectored(&self, bufs: &mut [IoSliceMut<'_>], flags: u32) -> Result<usize>;
+			pub async fn recv_vectored(&mut self, bufs: &mut [IoSliceMut<'_>], flags: BitFlags<MessageFlag>) -> Result<usize>;
 
 			#[asynchronous]
-			pub async fn recvfrom(&self, buf: &mut [u8], flags: u32) -> Result<(usize, SocketAddr)>;
+			pub async fn recvfrom(&mut self, buf: &mut [u8], flags: BitFlags<MessageFlag>) -> Result<(usize, SocketAddr)>;
 
 			#[asynchronous]
-			pub async fn recvmsg(&self, header: &mut MsgHdrMut<'_>, flags: u32) -> Result<usize>;
+			pub async fn recvmsg(&mut self, header: &mut MsgHdrMut<'_>, flags: BitFlags<MessageFlag>) -> Result<usize>;
 
 			#[asynchronous]
-			pub async fn send(&self, buf: &[u8], flags: u32) -> Result<usize>;
+			pub async fn send(&mut self, buf: &[u8], flags: BitFlags<MessageFlag>) -> Result<usize>;
 
 			#[asynchronous]
-			pub async fn send_vectored(&self, bufs: &[IoSlice<'_>], flags: u32) -> Result<usize>;
+			pub async fn send_vectored(&mut self, bufs: &[IoSlice<'_>], flags: BitFlags<MessageFlag>) -> Result<usize>;
 
 			#[asynchronous]
-			pub async fn sendmsg(&self, header: &MsgHdr<'_>, flags: u32) -> Result<usize>;
+			pub async fn sendmsg(&mut self, header: &MsgHdr<'_>, flags: BitFlags<MessageFlag>) -> Result<usize>;
 
 			#[asynchronous]
-			pub async fn sendto(&self, buf: &[u8], flags: u32, addr: &SocketAddr) -> Result<usize>;
+			pub async fn sendto(&mut self, buf: &[u8], flags: BitFlags<MessageFlag>, addr: &SocketAddr) -> Result<usize>;
 
 			#[asynchronous]
-			pub async fn poll(&self, flags: BitFlags<PollFlag>) -> Result<BitFlags<PollFlag>>;
+			pub async fn poll(&mut self, flags: BitFlags<PollFlag>) -> Result<BitFlags<PollFlag>>;
 
 			#[asynchronous]
-			pub async fn shutdown(&self, how: Shutdown) -> Result<()>;
+			pub async fn shutdown(&mut self, how: Shutdown) -> Result<()>;
 
 			#[asynchronous]
 			pub async fn set_recvbuf_size(&self, size: i32) -> Result<()>;
@@ -330,9 +418,6 @@ macro_rules! socket_impl {
 				mut inner = socket;
 			}
 		}
-
-		/* Safety: sockets don't have any mutable state in rust land */
-		unsafe impl SimpleSplit for $type {}
 	};
 }
 
@@ -380,7 +465,7 @@ impl DatagramSocket {
 
 	#[asynchronous]
 	pub async fn recv_from_addr(
-		&self, from: &SocketAddr, buf: &mut [u8], flags: u32
+		&mut self, from: &SocketAddr, buf: &mut [u8], flags: BitFlags<MessageFlag>
 	) -> Result<usize> {
 		loop {
 			let (read, addr) = self.recvfrom(buf, flags).await?;
@@ -417,12 +502,9 @@ impl TcpListener {
 	#[asynchronous]
 	pub async fn accept(&self) -> Result<(StreamSocket, SocketAddr)> {
 		let mut storage = AddressStorage::default();
-		let (fd, _) = ops::accept(self.socket.fd(), &mut storage).await?;
+		let (fd, _) = io::accept(self.socket.fd(), &mut storage).await?;
 
-		Ok((
-			StreamSocket { socket: Socket { fd } },
-			convert_addr(storage)
-		))
+		Ok((StreamSocket { socket: fd.into() }, convert_addr(storage)))
 	}
 }
 
@@ -435,7 +517,7 @@ impl Tcp {
 	where
 		A: ToSocketAddrs
 	{
-		let sock = connect_addrs(addr, SocketType::Stream as u32, IpProtocol::Tcp as u32).await?;
+		let sock = connect_addrs(addr, SocketType::Stream as u32, IpProtocol::Tcp).await?;
 
 		Ok(StreamSocket { socket: sock })
 	}
@@ -444,9 +526,9 @@ impl Tcp {
 	where
 		A: ToSocketAddrs
 	{
-		let sock = bind_addr(addr, SocketType::Stream as u32, IpProtocol::Tcp as u32).await?;
+		let sock = bind_addr(addr, SocketType::Stream as u32, IpProtocol::Tcp).await?;
 
-		ops::listen(sock.fd(), MAX_BACKLOG).await?;
+		io::listen(sock.fd(), MAX_BACKLOG).await?;
 
 		Ok(TcpListener { socket: sock })
 	}
@@ -461,8 +543,7 @@ impl Udp {
 	where
 		A: ToSocketAddrs
 	{
-		let sock =
-			connect_addrs(addrs, SocketType::Datagram as u32, IpProtocol::Udp as u32).await?;
+		let sock = connect_addrs(addrs, SocketType::Datagram as u32, IpProtocol::Udp).await?;
 
 		Ok(DatagramSocket { socket: sock })
 	}
@@ -471,7 +552,7 @@ impl Udp {
 	where
 		A: ToSocketAddrs
 	{
-		let sock = bind_addr(addrs, SocketType::Datagram as u32, IpProtocol::Udp as u32).await?;
+		let sock = bind_addr(addrs, SocketType::Datagram as u32, IpProtocol::Udp).await?;
 
 		Ok(DatagramSocket { socket: sock })
 	}

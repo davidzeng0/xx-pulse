@@ -25,6 +25,4 @@ pub use ops::*;
 pub use runtime::Runtime;
 use runtime::*;
 pub use streams::*;
-pub use xx_core::coroutines::{
-	asynchronous, check_interrupt, get_context, is_interrupted, with_context
-};
+pub use xx_core::coroutines::{asynchronous, check_interrupt, is_interrupted};

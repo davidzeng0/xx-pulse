@@ -1,17 +1,12 @@
 #![allow(unreachable_pub)]
 
-use std::{cell::Cell, ptr::addr_of};
+use std::cell::Cell;
 
-use xx_core::{
-	fiber::*,
-	macros::{container_of, unwrap_panic},
-	opt::hint::*,
-	pointer::*
-};
+use xx_core::{fiber::*, macros::container_of, opt::hint::*, pointer::*, runtime::join};
 
 use super::*;
 
-static mut POOL: Pool = Pool::new();
+static POOL: Pool = Pool::new();
 
 pub struct Pulse {
 	executor: Ptr<Executor>,
@@ -45,7 +40,7 @@ unsafe impl Environment for Pulse {
 	}
 
 	unsafe fn from_context(context: &Context) -> &Self {
-		let context = container_of!(Ptr::from(context), Self:context);
+		let context = container_of!(ptr!(context), Self:context);
 
 		/* Safety: guaranteed by caller */
 		unsafe { context.as_ref() }
@@ -72,7 +67,7 @@ impl Runtime {
 			driver: Driver::new()?,
 			#[allow(clippy::multiple_unsafe_ops_per_block)]
 			/* Safety: pool is valid */
-			executor: unsafe { Executor::new_with_pool(addr_of!(POOL).into()) }
+			executor: unsafe { Executor::new_with_pool(ptr!(&POOL)) }
 		};
 
 		Ok(runtime.pin_box())
@@ -85,8 +80,8 @@ impl Runtime {
 		/* Safety: the env lives until the task finishes */
 		#[allow(clippy::multiple_unsafe_ops_per_block)]
 		let task = unsafe {
-			let driver = Ptr::from(&self.driver);
-			let executor = Ptr::from(&self.executor);
+			let driver = ptr!(&self.driver);
+			let executor = ptr!(&self.executor);
 
 			coroutines::spawn_task(
 				executor,
@@ -115,7 +110,7 @@ impl Runtime {
 		};
 
 		/* Safety: we are blocked until the future completes */
-		unwrap_panic!(unsafe { block_on(block, resume, task) })
+		join(unsafe { block_on(block, resume, task) })
 	}
 }
 

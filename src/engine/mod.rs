@@ -207,11 +207,11 @@ pub trait EngineImpl {
 pub struct SyncEngine {}
 
 impl SyncEngine {
-	fn sync_result(result: Result<isize>) -> isize {
-		#[allow(clippy::unwrap_used, clippy::arithmetic_side_effects)]
+	const fn sync_result(result: OsResult<isize>) -> isize {
+		#[allow(clippy::arithmetic_side_effects)]
 		match result {
 			Ok(num) => num,
-			Err(err) => -(err.os_error().unwrap() as isize)
+			Err(err) => -(err as isize)
 		}
 	}
 }
@@ -327,37 +327,37 @@ impl Engine {
 }
 
 impl Engine {
-	engine_task!(open(path: Ptr<()>, flags: u32, mode: u32) -> Result<OwnedFd>);
+	engine_task!(open(path: Ptr<()>, flags: u32, mode: u32) -> OsResult<OwnedFd>);
 
-	engine_task!(close(fd: RawFd) -> Result<()>);
+	engine_task!(close(fd: RawFd) -> OsResult<()>);
 
-	engine_task!(read(fd: RawFd, buf: MutPtr<()>, len: usize, offset: i64) -> Result<usize>);
+	engine_task!(read(fd: RawFd, buf: MutPtr<()>, len: usize, offset: i64) -> OsResult<usize>);
 
-	engine_task!(write(fd: RawFd, buf: Ptr<()>, len: usize, offset: i64) -> Result<usize>);
+	engine_task!(write(fd: RawFd, buf: Ptr<()>, len: usize, offset: i64) -> OsResult<usize>);
 
-	engine_task!(socket(domain: u32, sockettype: u32, protocol: u32) -> Result<OwnedFd>);
+	engine_task!(socket(domain: u32, sockettype: u32, protocol: u32) -> OsResult<OwnedFd>);
 
-	engine_task!(accept(socket: RawFd, addr: MutPtr<()>, addrlen: MutPtr<i32>) -> Result<OwnedFd>);
+	engine_task!(accept(socket: RawFd, addr: MutPtr<()>, addrlen: MutPtr<i32>) -> OsResult<OwnedFd>);
 
-	engine_task!(connect(socket: RawFd, addr: Ptr<()>, addrlen: i32) -> Result<()>);
+	engine_task!(connect(socket: RawFd, addr: Ptr<()>, addrlen: i32) -> OsResult<()>);
 
-	engine_task!(recv(socket: RawFd, buf: MutPtr<()>, len: usize, flags: u32) -> Result<usize>);
+	engine_task!(recv(socket: RawFd, buf: MutPtr<()>, len: usize, flags: u32) -> OsResult<usize>);
 
-	engine_task!(recvmsg(socket: RawFd, header: MutPtr<MsgHdr>, flags: u32) -> Result<usize>);
+	engine_task!(recvmsg(socket: RawFd, header: MutPtr<MsgHdr>, flags: u32) -> OsResult<usize>);
 
-	engine_task!(send(socket: RawFd, buf: Ptr<()>, len: usize, flags: u32) -> Result<usize>);
+	engine_task!(send(socket: RawFd, buf: Ptr<()>, len: usize, flags: u32) -> OsResult<usize>);
 
-	engine_task!(sendmsg(socket: RawFd, header: Ptr<MsgHdr>, flags: u32) -> Result<usize>);
+	engine_task!(sendmsg(socket: RawFd, header: Ptr<MsgHdr>, flags: u32) -> OsResult<usize>);
 
-	engine_task!(shutdown(socket: RawFd, how: u32) -> Result<()>);
+	engine_task!(shutdown(socket: RawFd, how: u32) -> OsResult<()>);
 
-	engine_task!(bind(socket: RawFd, addr: Ptr<()>, addrlen: i32) -> Result<()>);
+	engine_task!(bind(socket: RawFd, addr: Ptr<()>, addrlen: i32) -> OsResult<()>);
 
-	engine_task!(listen(socket: RawFd, backlog: i32) -> Result<()>);
+	engine_task!(listen(socket: RawFd, backlog: i32) -> OsResult<()>);
 
-	engine_task!(fsync(file: RawFd) -> Result<()>);
+	engine_task!(fsync(file: RawFd) -> OsResult<()>);
 
-	engine_task!(statx(dirfd: RawFd, path: Ptr<()>, flags: u32, mask: u32, statx: MutPtr<Statx>) -> Result<()>);
+	engine_task!(statx(dirfd: RawFd, path: Ptr<()>, flags: u32, mask: u32, statx: MutPtr<Statx>) -> OsResult<()>);
 
-	engine_task!(poll(fd: RawFd, mask: u32) -> Result<u32>);
+	engine_task!(poll(fd: RawFd, mask: u32) -> OsResult<u32>);
 }

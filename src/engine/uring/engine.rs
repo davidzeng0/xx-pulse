@@ -3,14 +3,14 @@
 use std::{
 	cell::Cell,
 	os::fd::{AsFd, BorrowedFd},
-	slice,
+	ptr::slice_from_raw_parts_mut,
 	sync::atomic::{AtomicU32, Ordering}
 };
 
 use enumflags2::*;
 use xx_core::{
 	error,
-	macros::abort,
+	macros::panic_nounwind,
 	opt::hint::*,
 	os::{error::*, mman::*, openat::*},
 	trace, warn
@@ -34,7 +34,7 @@ impl<'a> Rings<'a> {
 		offset as usize + size_of::<T>() * count as usize
 	}
 
-	fn map_memory(size: usize, offset: MmapOffsets, fd: BorrowedFd<'_>) -> Result<Map<'a>> {
+	fn map_memory(size: usize, offset: MmapOffsets, fd: BorrowedFd<'_>) -> OsResult<Map<'a>> {
 		Builder::new(Type::Shared, size)
 			.protect(Protection::Read | Protection::Write)
 			.flag(Flag::Populate)
@@ -108,8 +108,8 @@ struct SubmissionQueue<'a> {
 	kflags: &'a AtomicU32,
 	kdropped: &'a AtomicU32,
 
-	array: &'a [UnsafeCell<u32>],
-	entries: &'a [UnsafeCell<SubmissionEntry>],
+	array: MutPtr<[u32]>,
+	entries: MutPtr<[SubmissionEntry]>,
 
 	mask: u32,
 	capacity: u32,
@@ -124,7 +124,7 @@ struct CompletionQueue<'a> {
 	kflags: &'a AtomicU32,
 	koverflow: &'a AtomicU32,
 
-	entries: &'a [UnsafeCell<CompletionEntry>],
+	entries: MutPtr<[CompletionEntry]>,
 
 	mask: u32,
 	capacity: u32
@@ -146,21 +146,18 @@ fn get_ptr<T>(map: &Map<'_>, off: u32) -> MutPtr<T> {
 /// the offset must be valid for the type T
 unsafe fn get_ref<'a, T>(map: &Map<'a>, off: u32) -> &'a T {
 	/* Safety: guaranteed by caller */
-	unsafe { get_ptr::<T>(map, off).as_mut() }
+	unsafe { get_ptr::<T>(map, off).as_ref() }
 }
 
-/// # Safety
-/// the range must be valid
-unsafe fn get_array<'a, T>(map: &Map<'a>, off: u32, len: u32) -> &'a [T] {
-	/* Safety: guaranteed by caller */
-	unsafe { slice::from_raw_parts(get_ptr::<T>(map, off).as_ptr(), len as usize) }
+fn get_array<T>(map: &Map<'_>, off: u32, len: u32) -> MutPtr<[T]> {
+	slice_from_raw_parts_mut(get_ptr::<T>(map, off).as_mut_ptr(), len as usize).into()
 }
 
 impl<'a> SubmissionQueue<'a> {
 	/// # Safety
 	/// `params` must be initialized by a successfull call to io_uring_setup
 	#[allow(unsafe_op_in_unsafe_fn)]
-	unsafe fn new(maps: &Rings<'a>, params: &Parameters) -> SubmissionQueue<'a> {
+	unsafe fn new(maps: &Rings<'a>, params: &Parameters) -> Self {
 		let ring = maps.submission_ring();
 		let sq = SubmissionQueue {
 			khead: get_ref(ring, params.sq_off.head),
@@ -178,12 +175,9 @@ impl<'a> SubmissionQueue<'a> {
 			tail: Cell::new(0)
 		};
 
-		for (i, elem) in sq.array.iter().enumerate() {
-			/* Safety: we have mutable access here */
+		for (i, elem) in ptr!(sq.array=>iter_mut().enumerate()) {
 			#[allow(clippy::cast_possible_truncation)]
-			unsafe {
-				*elem.as_mut() = i as u32;
-			}
+			(*elem = i as u32);
 		}
 
 		sq
@@ -197,23 +191,18 @@ impl<'a> SubmissionQueue<'a> {
 
 	/// # Safety
 	/// index must be in range
-	/// caller must ensure aliasing rules
-	#[allow(clippy::mut_from_ref)]
-	unsafe fn get_entry(&self, index: u32) -> &mut SubmissionEntry {
+	unsafe fn write(&self, index: u32, entry: &SubmissionEntry) {
 		/* Safety: guaranteed by caller */
-		unsafe { self.entries.get_unchecked((index) as usize).as_mut() }
+		unsafe { *ptr!(self.entries=>get_unchecked_mut(index as usize)) = *entry }
 	}
 
-	/// # Safety
-	/// caller must ensure aliasing rules
-	#[allow(clippy::mut_from_ref)]
-	unsafe fn next(&self) -> &mut SubmissionEntry {
+	fn write_next(&self, entry: &SubmissionEntry) {
 		let tail = self.tail.get();
 
 		self.tail.set(tail.wrapping_add(1));
 
 		/* Safety: tail is masked */
-		unsafe { self.get_entry(tail & self.mask) }
+		unsafe { self.write(tail & self.mask, entry) }
 	}
 
 	fn sync(&self) {
@@ -226,7 +215,7 @@ impl<'a> CompletionQueue<'a> {
 	/// # Safety
 	/// `params` must be initialized by a successfull call to io_uring_setup
 	#[allow(unsafe_op_in_unsafe_fn)]
-	unsafe fn new(maps: &Rings<'a>, params: &Parameters) -> CompletionQueue<'a> {
+	unsafe fn new(maps: &Rings<'a>, params: &Parameters) -> Self {
 		let ring = maps.completion_ring();
 
 		CompletionQueue {
@@ -251,11 +240,9 @@ impl<'a> CompletionQueue<'a> {
 
 	/// # Safety
 	/// index must be in bounds
-	/// caller must enforce aliasing rules
-	#[allow(clippy::mut_from_ref)]
-	unsafe fn get_entry(&self, index: u32) -> &mut CompletionEntry {
+	unsafe fn read(&self, index: u32) -> CompletionEntry {
 		/* Safety: guaranteed by caller */
-		unsafe { self.entries.get_unchecked(index as usize).as_mut() }
+		unsafe { *ptr!(self.entries=>get_unchecked(index as usize)) }
 	}
 
 	fn read_ring(&self) -> (u32, u32) {
@@ -301,9 +288,8 @@ pub struct IoUring {
 	to_submit: Cell<u32>
 }
 
-const NO_OP: Request<isize> = Request::no_op();
+static NO_OP: Request<isize> = Request::no_op();
 
-#[allow(clippy::unwrap_used)]
 fn create_io_uring() -> Result<(IoRingFeatures, OwnedFd, Parameters)> {
 	struct IoUringSetup {}
 
@@ -376,7 +362,7 @@ fn create_io_uring() -> Result<(IoRingFeatures, OwnedFd, Parameters)> {
 	}
 
 	params.sq_entries = 0x100;
-	params.cq_entries = 0x10000;
+	params.cq_entries = 0x2000;
 	params.set_flags(setup_flags);
 
 	if !setup_flags.intersects(SetupFlag::Clamp) {
@@ -406,7 +392,7 @@ fn create_io_uring() -> Result<(IoRingFeatures, OwnedFd, Parameters)> {
 		}
 
 		Err(err) => {
-			if err.os_error().unwrap() == OsError::NoMem {
+			if err == OsError::NoMem {
 				error!(target: &ring,
 					"== Failed to setup io_uring.\n\
 					:: This is usually because the current locked memory limit is too low.\n\
@@ -414,7 +400,7 @@ fn create_io_uring() -> Result<(IoRingFeatures, OwnedFd, Parameters)> {
 				);
 			}
 
-			Err(err)
+			Err(err.into())
 		}
 	}
 }
@@ -437,7 +423,7 @@ impl IoUring {
 	}
 
 	#[inline(always)]
-	fn enter<F: Fn(&Self, u32) -> Result<i32>>(&self, f: F) -> Result<()> {
+	fn enter<F: Fn(&Self, u32) -> OsResult<i32>>(&self, f: F) -> Result<()> {
 		self.queue.submission.sync();
 
 		let mut to_submit = self.to_submit.get();
@@ -465,17 +451,17 @@ impl IoUring {
 						continue;
 					}
 
-					break Err(Core::OutOfMemory.as_err());
+					break Err(Core::OutOfMemory.into());
 				}
 
-				#[allow(clippy::unwrap_used)]
 				Err(err) => {
-					break match err.os_error().unwrap() {
+					break match err {
 						OsError::Time | OsError::Intr | OsError::Busy if to_submit == 0 => {
 							break Ok(())
 						}
-						OsError::Again => return Err(Core::OutOfMemory.as_err()),
-						_ => Err(err)
+
+						OsError::Again => return Err(Core::OutOfMemory.into()),
+						_ => Err(err.into())
 					};
 				}
 			}
@@ -515,12 +501,13 @@ impl IoUring {
 		}
 
 		let ts = TimeSpec {
-			nanos: timeout.try_into().map_err(|_| Core::Overflow.as_err())?,
+			nanos: timeout.try_into().map_err(|_| Core::Overflow)?,
 			sec: 0
 		};
-		let op = Op::timeout(Ptr::from(&ts), 1, 0);
 
-		self.start_async(op, Ptr::from(&NO_OP));
+		let op = Op::timeout(ptr!(&ts), 1, 0);
+
+		self.start_async(op, ptr!(&NO_OP));
 
 		/* Safety: submitting the amount of sqes queued */
 		self.enter(|this, submit| unsafe {
@@ -594,7 +581,7 @@ impl IoUring {
 		while head != tail {
 			let CompletionEntry { user_data, result, .. } =
 				/* Safety: masked */
-				*unsafe { self.queue.completion.get_entry(head & mask) };
+				unsafe { self.queue.completion.read(head & mask) };
 			/*
 			 * more requests may be queued in callback, so
 			 * update the cqe head here so that we have one more cqe
@@ -613,15 +600,14 @@ impl IoUring {
 
 	#[inline(always)]
 	fn push(&self, request: SubmissionEntry) {
-		/* Safety: temporary access to the submission queue entry */
-		unsafe { *self.queue.submission.next() = request };
+		self.queue.submission.write_next(&request);
 
 		#[allow(clippy::arithmetic_side_effects)]
 		self.to_submit.set(self.to_submit.get() + 1);
 
 		if unlikely(self.to_submit.get() >= self.queue.submission.capacity) {
 			if let Err(err) = self.flush() {
-				abort!("Failed to flush submission ring: {:?}", err);
+				panic_nounwind!("Failed to flush submission ring: {:?}", err);
 			}
 		}
 	}
@@ -658,7 +644,7 @@ impl EngineImpl for IoUring {
 
 		op.addr.addr = request.int_addr() as u64;
 
-		self.start_async(op, Ptr::from(&NO_OP));
+		self.start_async(op, ptr!(&NO_OP));
 
 		Ok(())
 	}
