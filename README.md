@@ -2,6 +2,8 @@
 
 ![](https://github.com/davidzeng0/xx-pulse/actions/workflows/build.yml/badge.svg?event=push)
 
+`msrv: 1.76.0 stable`
+
 The fastest async runtime for rust
 
 Available I/O Backends:
