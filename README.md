@@ -18,18 +18,37 @@ Performance (inlining)
 ```rust
 #[inline(never)] // applies the inline to the `.await`!
 #[asynchronous]
-async fn no_inline() { ... }
+async fn no_inline() {
+	// the call to `no_inline()` is inlined,
+	// but the await call to the body
+	// will not be inlined
+	...
+}
 
 #[inline(always)] // zero overhead calling!
 #[asynchronous]
-async fn always_inline() { ... }
+async fn always_inline() {
+	// the code below will be inlined
+	// into the calling function
+	...
+}
 ```
 
 Async trait dynamic dispatch with zero allocations
 ```rust
 #[asynchronous]
 trait MyTrait {
-	fn my_func(&mut self); // dynamic dispatch! no `Box::new`
+	// dynamic dispatch! no `Box::new`
+	async fn my_async_func(&mut self);
+
+	// normal functions okay too
+	fn my_normal_func(&mut self);
+}
+
+#[asynchronous]
+async fn takes_trait(value: &mut dyn MyTrait) {
+	value.my_async_func().await;
+	value.my_normal_func();
 }
 ```
 
@@ -77,7 +96,7 @@ call_async_closure(async |val| {
 println!("{num}!"); // 47!
 ```
 
-Recursion (no allocation)
+Recursion (no allocation!)
 ```rust
 #[asynchronous]
 async fn fibonacci(n: i32) -> i32 {
@@ -87,4 +106,6 @@ async fn fibonacci(n: i32) -> i32 {
 
 	fibonacci(n - 1).await + fibonacci(n - 2).await
 }
+
+println!("{}", fibonacci(20).await);
 ```
