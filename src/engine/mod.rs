@@ -2,7 +2,6 @@
 
 use std::os::fd::{IntoRawFd, OwnedFd, RawFd};
 
-use paste::paste;
 use xx_core::{
 	error::*,
 	future::*,
@@ -12,6 +11,7 @@ use xx_core::{
 		syscall::SyscallResult,
 		unistd::close_raw
 	},
+	paste::paste,
 	pointer::*
 };
 

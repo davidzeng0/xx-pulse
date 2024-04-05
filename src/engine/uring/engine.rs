@@ -9,7 +9,7 @@ use std::{
 
 use enumflags2::*;
 use xx_core::{
-	error,
+	debug, error,
 	macros::panic_nounwind,
 	opt::hint::*,
 	os::{error::*, mman::*, openat::*},
@@ -381,7 +381,7 @@ fn create_io_uring() -> Result<(IoRingFeatures, OwnedFd, Parameters)> {
 
 	match io_uring_setup(params.sq_entries, &mut params) {
 		Ok(fd) => {
-			trace!(
+			debug!(
 				target: &ring,
 				"++ Initialized with {}:{} entries",
 				params.sq_entries,

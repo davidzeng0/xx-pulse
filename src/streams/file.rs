@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used)]
 
-use std::{cell::Cell, io::SeekFrom, path::Path};
+use std::{io::SeekFrom, path::Path};
 
 use io::*;
 use xx_core::os::{
@@ -12,7 +12,7 @@ use super::*;
 
 pub struct File {
 	fd: OwnedFd,
-	offset: Cell<u64>
+	offset: u64
 }
 
 #[asynchronous]
@@ -21,19 +21,18 @@ impl File {
 	pub async fn open(path: impl AsRef<Path>) -> Result<Self> {
 		Ok(Self {
 			fd: open(path.as_ref(), BitFlags::default(), 0).await?,
-			offset: Cell::new(0)
+			offset: 0
 		})
 	}
 
 	pub async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
 		read_into!(buf);
 
-		let offset = self.offset.get();
-		let read = read(self.fd.as_fd(), buf, offset.try_into().unwrap()).await?;
+		let read = read(self.fd.as_fd(), buf, self.offset.try_into().unwrap()).await?;
 		let read = check_interrupt_if_zero(read).await?;
 
 		#[allow(clippy::arithmetic_side_effects)]
-		self.offset.set(offset + read as u64);
+		(self.offset += read as u64);
 
 		Ok(read)
 	}
@@ -41,12 +40,11 @@ impl File {
 	pub async fn write(&mut self, buf: &[u8]) -> Result<usize> {
 		write_from!(buf);
 
-		let offset = self.offset.get();
-		let wrote = write(self.fd.as_fd(), buf, offset.try_into().unwrap()).await?;
+		let wrote = write(self.fd.as_fd(), buf, self.offset.try_into().unwrap()).await?;
 		let wrote = check_interrupt_if_zero(wrote).await?;
 
 		#[allow(clippy::arithmetic_side_effects)]
-		self.offset.set(offset + wrote as u64);
+		(self.offset += wrote as u64);
 
 		Ok(wrote)
 	}
@@ -56,27 +54,22 @@ impl File {
 	}
 
 	pub async fn seek(&mut self, seek: SeekFrom) -> Result<u64> {
-		let offset = match seek {
+		self.offset = match seek {
 			SeekFrom::Start(pos) => pos,
-			SeekFrom::Current(rel) => self
-				.offset
-				.get()
-				.checked_add_signed(rel)
-				.ok_or(Core::Overflow)?,
+			SeekFrom::Current(rel) => self.offset.checked_add_signed(rel).ok_or(Core::Overflow)?,
 			SeekFrom::End(rel) => self.stream_len().await?.checked_add_signed(rel).unwrap()
 		};
 
-		self.offset.set(offset);
-
-		Ok(offset)
+		Ok(self.offset)
 	}
 
 	pub async fn close(self) -> Result<()> {
 		close(self.fd).await
 	}
 
-	pub fn pos(&self) -> u64 {
-		self.offset.get()
+	#[must_use]
+	pub const fn pos(&self) -> u64 {
+		self.offset
 	}
 }
 

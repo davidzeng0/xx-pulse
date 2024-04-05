@@ -14,6 +14,45 @@ Available I/O Backends:
 This library is currently only available for Linux (contributions welcome).<br>
 For Windows and Mac users, running in Docker or WSL also work.
 
+### Echo server example
+
+Add dependency
+```sh
+cargo add --git https://github.com/davidzeng0/xx-pulse.git xx-pulse
+```
+
+In file `main.rs`
+```rust
+use xx_pulse::Tcp;
+
+#[xx_pulse::main]
+async fn main() {
+    let listener = Tcp::bind("127.0.0.1:8080").await.unwrap();
+
+    loop {
+        let (mut client, _) = listener.accept().await.unwrap();
+
+        xx_pulse::spawn(async move {
+            let mut buf = [0; 1024];
+
+            loop {
+                let n = client.recv(&mut buf, Default::default()).await.unwrap();
+
+                if n == 0 {
+                    break;
+                }
+
+                let n = client.send(&buf, Default::default()).await.unwrap();
+
+                if n == 0 {
+                    break;
+                }
+            }
+        }).await;
+    }
+}
+```
+
 ### Why Fibers?
 
 Performance (inlining)

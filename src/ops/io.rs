@@ -8,10 +8,10 @@ use std::{
 	path::Path
 };
 
-use paste::paste;
 use xx_core::{
 	error::*,
 	os::{epoll::*, fcntl::*, inet::*, openat::*, socket::*, stat::*},
+	paste::paste,
 	pointer::*
 };
 
