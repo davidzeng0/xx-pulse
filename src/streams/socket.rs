@@ -281,7 +281,7 @@ impl Socket {
 		self.ready.remove(flags);
 		self.ready.insert(result & flags);
 
-		Ok(flags)
+		Ok(result)
 	}
 
 	pub async fn shutdown(&mut self, how: Shutdown) -> Result<()> {

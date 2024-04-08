@@ -10,6 +10,22 @@ Available I/O Backends:
 - io_uring (requires linux kernel version >= 5.6, recommended 5.11 or 6.1 for best performance)
 - kqueue, iocp, epoll: contributions welcome
 
+Currently supported architectures:
+- amd64 (x86_64)
+- arm64 (aarch64)
+
+Memory safety status: FFI support required in Miri, currently checked by manual code review and tests
+
+Current and planned features:
+- [x] custom async desugaring
+- [x] low latency and zero overhead read/write APIs with the same ergonomics as `std::io`, now with 100% less allocations, `thread_local` lookups, memory copy, and passing owned buffers
+- [x] dynamic dispatch
+- [x] low overhead spawn, select, join
+- [x] safe async closures, async fn mut
+- [x] use sync code in an async manner, without rewriting existing sync code
+- [ ] async drop (compiler support is ideal)
+- [ ] io_uring goodies (fixed file, buffer select, async drop support is ideal to implement ergonomically)
+
 ### Note:
 This library is currently only available for Linux (contributions welcome).<br>
 For Windows and Mac users, running in Docker or WSL also work.
@@ -18,6 +34,10 @@ For Windows and Mac users, running in Docker or WSL also work.
 
 Add dependency
 ```sh
+# support lib and async impls
+cargo add --git https://github.com/davidzeng0/xx-core.git xx-core
+
+# i/o engine and driver
 cargo add --git https://github.com/davidzeng0/xx-pulse.git xx-pulse
 ```
 
@@ -55,7 +75,7 @@ async fn main() {
 
 ### Why Fibers?
 
-Performance (inlining)
+Performance (inlining) (also see [switching](https://github.com/davidzeng0/xx-core/blob/main/src/coroutines/README.md))
 ```rust
 #[inline(never)] // applies the inline to the `.await`!
 #[asynchronous]
@@ -106,7 +126,7 @@ impl std::io::Read for AsyncReader {
 
         /* Safety: must ensure any lifetimes are valid across suspends */
         unsafe {
-            with_context(
+            scoped(
                 self.async_context,
                 read(buf)
             )
@@ -115,7 +135,7 @@ impl std::io::Read for AsyncReader {
 }
 ```
 
-Async closures (no more poll functions!)
+Async closures (no more poll functions or `impl Future for MyFuture`!)
 ```rust
 #[asynchronous]
 async fn call_async_closure(mut func: impl AsyncFnMut<i32>) {

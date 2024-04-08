@@ -176,6 +176,8 @@ impl Driver {
 		}
 	}
 
+	// FIXME: force all fibers to exit when the driver exits, or use-after-free
+	// could occur
 	pub fn exit(&self) {
 		/* Safety: exclusive unsafe cell access */
 		unsafe { ptr!(self.inner=>exiting = true) };
@@ -221,7 +223,7 @@ macro_rules! engine_task {
 		#[future]
 		pub unsafe fn $func(&self, $($arg: $type),*) -> isize {
 			#[cancel]
-			fn cancel(self: &Engine) -> Result<()> {
+			fn cancel(engine: &Engine) -> Result<()> {
 				/* use this fn to generate the cancel closure type */
 				Ok(())
 			}

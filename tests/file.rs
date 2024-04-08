@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 use xx_core::async_std::io::ReadExt;
 use xx_pulse::*;
 

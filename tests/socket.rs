@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 use xx_core::error::*;
 use xx_pulse::*;
 

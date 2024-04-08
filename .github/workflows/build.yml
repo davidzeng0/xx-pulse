@@ -39,7 +39,7 @@ jobs:
       - name: Test debug build
         run: ./docker_run cd tests \&\& cargo test \&\& cargo valgrind test
       - name: Test release build
-        run: ./docker_run cd tests \&\& cargo test \&\& cargo valgrind test -r
+        run: ./docker_run cd tests \&\& cargo test -r \&\& cargo valgrind test -r
       - name: Generate test coverage
         run: ./docker_run cargo llvm-cov --all-features --workspace --codecov --output-path codecov.json
       - name: Upload coverage reports to Codecov

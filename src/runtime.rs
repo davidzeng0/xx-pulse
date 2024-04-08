@@ -40,7 +40,7 @@ unsafe impl Environment for Pulse {
 	}
 
 	unsafe fn from_context(context: &Context) -> &Self {
-		let context = container_of!(ptr!(context), Self:context);
+		let context = container_of!(ptr!(context), Self => context);
 
 		/* Safety: guaranteed by caller */
 		unsafe { context.as_ref() }

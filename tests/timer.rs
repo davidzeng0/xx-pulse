@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 use std::time::{Duration, Instant};
 
 use xx_core::error::Result;
