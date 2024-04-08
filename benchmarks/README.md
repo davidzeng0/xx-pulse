@@ -1,3 +1,5 @@
+All tests are ran single-threaded, for tokio it would be the `current_thread` runtime
+
 ![](./Echo%20server%20QPS.svg)
 
 ![](./Sequential%20Read.svg)
