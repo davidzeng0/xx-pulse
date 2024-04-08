@@ -35,11 +35,11 @@ jobs:
           echo ARGS=\"\$@\"\; docker run --rm -e VALGRINDFLAGS=\"$VALGRINDFLAGS\" -v .:/base rust \"\$ARGS\" > ./docker_run
           chmod +x ./docker_run
       - name: Check & Lint
-        run: ./docker_run RUSTFLAGS=\"-D warnings\" cargo +nightly-2024-02-10 clippy --all-features
+        run: ./docker_run RUSTFLAGS=\"-D warnings\" cargo +nightly clippy --all-targets
       - name: Test debug build
-        run: ./docker_run cd tests \&\& cargo test \&\& cargo valgrind test
+        run: ./docker_run cd tests \&\& cargo test --tests \&\& cargo valgrind test --tests
       - name: Test release build
-        run: ./docker_run cd tests \&\& cargo test -r \&\& cargo valgrind test -r
+        run: ./docker_run cd tests \&\& cargo test -r --tests \&\& cargo valgrind test -r --tests
       - name: Generate test coverage
         run: ./docker_run cargo llvm-cov --all-features --workspace --codecov --output-path codecov.json
       - name: Upload coverage reports to Codecov
