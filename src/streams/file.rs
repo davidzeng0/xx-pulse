@@ -3,10 +3,7 @@
 use std::{io::SeekFrom, path::Path};
 
 use io::*;
-use xx_core::os::{
-	fcntl::AtFlag,
-	stat::{Statx, StatxMask}
-};
+use xx_core::os::{fcntl::*, stat::*};
 
 use super::*;
 

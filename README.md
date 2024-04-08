@@ -4,7 +4,7 @@
 
 `msrv: 1.76.0 stable`
 
-The fastest async runtime for rust
+The fastest async runtime for rust (see [benchmarks](./benchmarks/README.md))
 
 Available I/O Backends:
 - io_uring (requires linux kernel version >= 5.6, recommended 5.11 or 6.1 for best performance)
