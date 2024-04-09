@@ -23,6 +23,7 @@ Current and planned features:
 - [x] low overhead spawn, select, join
 - [x] safe async closures, async fn mut
 - [x] use sync code in an async manner, without rewriting existing sync code
+- [ ] multithreading
 - [ ] async drop (compiler support is ideal)
 - [ ] io_uring goodies (fixed file, buffer select, async drop support is ideal to implement ergonomically)
 
