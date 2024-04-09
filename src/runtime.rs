@@ -2,34 +2,32 @@
 
 use std::cell::Cell;
 
-use xx_core::{fiber::*, macros::container_of, opt::hint::*, pointer::*, runtime::join};
+use xx_core::{
+	container::zero_alloc::linked_list::*, coroutines::get_context, debug, fiber::*,
+	macros::container_of, opt::hint::*, pointer::*, runtime::join
+};
 
 use super::*;
 
-static POOL: Pool = Pool::new();
-
 pub struct Pulse {
-	executor: Ptr<Executor>,
-	driver: Ptr<Driver>,
-	context: Context
+	pub(crate) context: Context,
+	pub(crate) driver: Ptr<Driver>,
+	pub(crate) executor: Ptr<Executor>,
+	pub(crate) workers: Ptr<LinkedList>
 }
 
 impl Pulse {
 	/// # Safety
 	/// See `Context::run`
 	/// the executor, driver, and worker must live for self
-	unsafe fn new(executor: Ptr<Executor>, driver: Ptr<Driver>, worker: Ptr<Worker>) -> Self {
+	unsafe fn new(driver: Ptr<Driver>, executor: Ptr<Executor>, workers: Ptr<LinkedList>) -> Self {
 		Self {
-			executor,
-			driver,
 			/* Safety: guaranteed by caller */
-			context: unsafe { Context::new::<Self>(worker) }
+			context: unsafe { Context::new::<Self>() },
+			driver,
+			executor,
+			workers
 		}
-	}
-
-	#[must_use]
-	pub const fn driver(&self) -> Ptr<Driver> {
-		self.driver
 	}
 }
 
@@ -39,6 +37,10 @@ unsafe impl Environment for Pulse {
 		&self.context
 	}
 
+	fn context_mut(&mut self) -> &mut Context {
+		&mut self.context
+	}
+
 	unsafe fn from_context(context: &Context) -> &Self {
 		let context = container_of!(ptr!(context), Self => context);
 
@@ -46,9 +48,9 @@ unsafe impl Environment for Pulse {
 		unsafe { context.as_ref() }
 	}
 
-	unsafe fn clone(&self, worker: Ptr<Worker>) -> Self {
+	unsafe fn clone(&self) -> Self {
 		/* Safety: guaranteed by caller */
-		unsafe { Self::new(self.executor(), self.driver, worker) }
+		unsafe { Self::new(self.driver, self.executor, self.workers) }
 	}
 
 	fn executor(&self) -> Ptr<Executor> {
@@ -56,9 +58,32 @@ unsafe impl Environment for Pulse {
 	}
 }
 
+pub struct PulseWorker {
+	pub(crate) context: Ptr<Context>,
+	pub(crate) node: Node
+}
+
+impl PulseWorker {
+	/// # Safety
+	/// must append to list before dropping
+	#[asynchronous]
+	pub async unsafe fn new() -> Self {
+		Self { context: get_context().await, node: Node::new() }
+	}
+}
+
+impl Drop for PulseWorker {
+	fn drop(&mut self) {
+		/* Safety: guaranteed by caller */
+		unsafe { self.node.unlink_unchecked() };
+	}
+}
+
 pub struct Runtime {
 	driver: Driver,
-	executor: Executor
+	executor: Executor,
+	workers: LinkedList,
+	pool: Pool
 }
 
 impl Runtime {
@@ -67,25 +92,27 @@ impl Runtime {
 			driver: Driver::new()?,
 			#[allow(clippy::multiple_unsafe_ops_per_block)]
 			/* Safety: pool is valid */
-			executor: unsafe { Executor::new_with_pool(ptr!(&POOL)) }
+			executor: Executor::new(),
+			workers: LinkedList::new(),
+			pool: Pool::new()
 		};
 
 		Ok(runtime.pin_box())
 	}
 
-	pub fn block_on<T>(&mut self, task: T) -> T::Output
+	pub fn block_on<T>(&self, task: T) -> T::Output
 	where
 		T: Task
 	{
 		/* Safety: the env lives until the task finishes */
 		#[allow(clippy::multiple_unsafe_ops_per_block)]
 		let task = unsafe {
-			let driver = ptr!(&self.driver);
-			let executor = ptr!(&self.executor);
-
 			coroutines::spawn_task(
-				executor,
-				move |worker| Pulse::new(executor, driver, worker),
+				Pulse::new(
+					ptr!(&self.driver),
+					ptr!(&self.executor),
+					ptr!(&self.workers)
+				),
 				task
 			)
 		};
@@ -115,15 +142,54 @@ impl Runtime {
 }
 
 impl Drop for Runtime {
+	#[allow(clippy::multiple_unsafe_ops_per_block)]
 	fn drop(&mut self) {
-		#[allow(clippy::unwrap_used)]
-		self.driver.exit();
+		loop {
+			/* to prevent busy looping, move all our nodes to a new list */
+			let mut list = LinkedList::new();
+			let list = list.pin_local();
+
+			/* Safety: our new list is pinned, and we clear out all nodes before
+			 * returning
+			 */
+			unsafe { self.workers.move_elements(&list) };
+
+			if list.empty() {
+				break;
+			}
+
+			while let Some(node) = list.pop_front() {
+				let worker = container_of!(node, PulseWorker => node);
+
+				/* Safety: all nodes are wrapped in PulseWorker */
+				let context = unsafe { ptr!(worker=>context) };
+
+				/* Safety: the worker may not exit immediately, and it unlinks itself on drop */
+				unsafe { self.workers.append(node.as_ref()) };
+
+				/* Safety: signal the task to interrupt. when the worker exits, it unlinks
+				 * itself */
+				let result = unsafe { Context::interrupt(context) };
+
+				if let Err(err) = &result {
+					debug!("Cancel was not successful: {:?}", err);
+				}
+			}
+
+			/* complete any pending i/o */
+			self.driver.exit();
+		}
 	}
 }
 
 impl Pin for Runtime {
+	#[allow(clippy::multiple_unsafe_ops_per_block)]
 	unsafe fn pin(&mut self) {
 		/* Safety: we are being pinned */
-		unsafe { self.executor.pin() };
+		unsafe {
+			self.executor.pin();
+			self.executor.set_pool(ptr!(&self.pool));
+			self.workers.pin();
+		}
 	}
 }

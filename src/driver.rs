@@ -176,8 +176,6 @@ impl Driver {
 		}
 	}
 
-	// FIXME: force all fibers to exit when the driver exits, or use-after-free
-	// could occur
 	pub fn exit(&self) {
 		/* Safety: exclusive unsafe cell access */
 		unsafe { ptr!(self.inner=>exiting = true) };

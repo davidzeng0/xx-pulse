@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use enumflags2::BitFlags;
 use xx_core::{
-	coroutines::{self, Context, Environment, Executor, Task, Worker},
+	coroutines::{self, Context, Environment, Executor, Task},
 	error::*,
 	future::*
 };

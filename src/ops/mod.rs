@@ -14,9 +14,11 @@ pub use timers::*;
 pub use xx_core::coroutines::{Join, JoinHandle, Select};
 
 #[asynchronous]
-async fn internal_get_runtime_context() -> Ptr<Pulse> {
+async fn internal_get_pulse_env() -> Ptr<Pulse> {
+	let context = get_context().await;
+
 	/* Safety: we are in an async function */
-	let env = unsafe { get_context().await.as_ref() }.get_environment::<Pulse>();
+	let env = unsafe { ptr!(context=>get_environment::<Pulse>()) };
 
 	#[allow(clippy::unwrap_used)]
 	env.ok_or_else(|| fmt_error!("Cannot use xx-pulse functions with a different runtime"))
@@ -26,6 +28,8 @@ async fn internal_get_runtime_context() -> Ptr<Pulse> {
 
 #[asynchronous]
 async fn internal_get_driver() -> Ptr<Driver> {
+	let env = internal_get_pulse_env().await;
+
 	/* Safety: environment outlives context */
-	unsafe { internal_get_runtime_context().await.as_ref() }.driver()
+	unsafe { ptr!(env=>driver) }
 }
