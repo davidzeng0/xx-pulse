@@ -94,6 +94,40 @@ async fn always_inline() {
     // into the calling function
     ...
 }
+
+// the following two functions are identical in performance
+#[asynchronous]
+async fn layered() -> i32 {
+    #[asynchronous]
+    #[inline(always)]
+    async fn add(a: i32, b: i32) -> i32 {
+        a + b
+    }
+
+    #[asynchronous]
+    #[inline(always)]
+    async fn produce_first() -> i32 {
+        5
+    }
+
+    #[asynchronous]
+    #[inline(always)]
+    async fn produce_second() -> i32 {
+        7
+    }
+
+    let (a, b) = (
+        produce_first().await,
+        produce_second().await
+    );
+
+    add(a, b).await
+}
+
+#[asynchronous]
+async fn flattened() -> i32 {
+    12
+}
 ```
 
 Async trait dynamic dispatch with zero allocations
@@ -116,23 +150,51 @@ async fn takes_trait(value: &mut dyn MyTrait) {
 
 Mix sync code and async code
 ```rust
-struct AsyncReader {
-    async_context: Ptr<Context>
+struct Adapter<'a> {
+    async_context: &'a Context
 }
 
-impl std::io::Read for AsyncReader {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        #[asynchronous]
-        async fn read(buf: &mut [u8]) { ... }
+#[asynchronous]
+async fn read_inner(buf: &mut [u8]) {
+    ... // do a non-blocking read here, with async capabilities
+}
 
-        /* Safety: must ensure any lifetimes are valid across suspends */
+impl std::io::Read for Adapter<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        // # Safety
+        // Must ensure any lifetimes captured are valid across suspends.
+        //
+        // This also includes any lifetimes captured by sync code leading up
+        // to this function call.
         unsafe {
-            scoped(
-                self.async_context,
-                read(buf)
-            )
+            scoped(self.async_context, read_inner(buf))
         }
+
+        // For example, the following is invalid
+        THREAD_LOCAL.with(|value| {
+            // value might be freed after suspend!
+            unsafe { scoped(context, do_stuff_with(value)) }
+
+            // without any async. in this case, the constructor
+            // of `adapter` must be unsafe!
+            std::io::Read::read(adapter);
+
+            // oh no! value might have been freed
+            do_something_sync_with(value);
+        });
     }
+}
+
+#[asynchronous]
+async fn do_async_read(buf: &mut [u8]) -> std::io::Result<usize> {
+    // the magic words
+    let async_context = unsafe { get_context().await };
+    let mut reader = Adapter { async_context };
+
+    // do the sync read without blocking the thread
+    let read = std::io::Read::read(&mut reader);
+
+    read
 }
 ```
 

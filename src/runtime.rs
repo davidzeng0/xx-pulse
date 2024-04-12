@@ -68,7 +68,11 @@ impl PulseWorker {
 	/// must append to list before dropping
 	#[asynchronous]
 	pub async unsafe fn new() -> Self {
-		Self { context: get_context().await, node: Node::new() }
+		Self {
+			/* Safety: we are in an async function */
+			context: unsafe { get_context().await }.into(),
+			node: Node::new()
+		}
 	}
 }
 
@@ -100,9 +104,9 @@ impl Runtime {
 		Ok(runtime.pin_box())
 	}
 
-	pub fn block_on<T>(&self, task: T) -> T::Output
+	pub fn block_on<T, Output>(&self, task: T) -> Output
 	where
-		T: Task
+		T: for<'a> Task<Output<'a> = Output>
 	{
 		/* Safety: the env lives until the task finishes */
 		#[allow(clippy::multiple_unsafe_ops_per_block)]

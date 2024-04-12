@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use quote::ToTokens;
 use syn::{visit_mut::VisitMut, *};
-use xx_macro_support::{function::get_args, visit_macro::visit_macro_body};
+use xx_macro_support::visit_macro::*;
 
 struct HasAwait(bool);
 
@@ -39,21 +39,18 @@ pub fn main(_: TokenStream, item: TokenStream) -> TokenStream {
 
 	if let Some(pos) = pos {
 		let sync: Vec<_> = func.block.stmts.drain(0..pos).collect();
-		let (sig, ident, block) = (&func.sig, &func.sig.ident, &func.block);
-		let args = get_args(&sig.inputs, true);
+		let (ident, block) = (&func.sig.ident, &func.block);
 
 		func.attrs.clear();
 		main.block = parse_quote! {{
-			#[::xx_pulse::asynchronous]
-			#sig {
-				#(#sync)*
+			#(#sync)*
 
-				::xx_pulse::Runtime::new()
-					.unwrap()
-					.block_on(async move #block)
-			}
-
-			::xx_core::coroutines::Task::run(#ident(#args), ::xx_core::pointer::Ptr::null())
+			::xx_pulse::Runtime::new()
+				.unwrap()
+				.block_on({
+					#[::xx_pulse::asynchronous(block)]
+					async fn #ident() #block
+				})
 		}};
 	}
 

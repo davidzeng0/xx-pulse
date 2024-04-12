@@ -247,8 +247,7 @@ impl<'a> CompletionQueue<'a> {
 
 	fn read_ring(&self) -> (u32, u32) {
 		(
-			/* Safety: non atomic read is okay */
-			unsafe { *self.khead.as_ptr() },
+			self.khead.load(Ordering::Relaxed),
 			self.ktail.load(Ordering::Acquire)
 		)
 	}

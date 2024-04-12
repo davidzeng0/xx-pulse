@@ -103,8 +103,7 @@ pub mod raw {
 			#[asynchronous]
 			#[inline(always)]
 			pub async unsafe fn $func($($arg: $type),*) -> $return_type {
-				/* Safety: driver outlives context */
-				let driver = unsafe { internal_get_driver().await.as_ref() };
+				let driver = internal_get_driver().await;
 
 				if !$force {
 					check_interrupt().await?;

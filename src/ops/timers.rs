@@ -2,8 +2,7 @@ use super::*;
 
 #[asynchronous]
 pub async fn timeout(expire: u64, flags: BitFlags<TimeoutFlag>) -> Result<()> {
-	/* Safety: driver outlives context */
-	let driver = unsafe { internal_get_driver().await.as_ref() };
+	let driver = internal_get_driver().await;
 
 	check_interrupt().await?;
 	block_on(driver.timeout(expire, flags)).await

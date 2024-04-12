@@ -2,14 +2,11 @@ use super::*;
 
 #[asynchronous]
 #[allow(clippy::multiple_unsafe_ops_per_block)]
-pub(crate) async fn spawn_entry<T>(task: T) -> T::Output
+pub(crate) async fn spawn_entry<T, Output>(task: T) -> Output
 where
-	T: Task
+	T: for<'a> Task<Output<'a> = Output>
 {
-	let env = internal_get_pulse_env().await;
-
-	/* Safety: we are in an async function */
-	let workers = unsafe { ptr!(env=>workers) };
+	let workers = internal_get_pulse_env().await.workers;
 
 	/* Safety: the worker is appended to the list */
 	let worker = unsafe { PulseWorker::new().await };
@@ -21,38 +18,35 @@ where
 }
 
 #[asynchronous]
-pub async fn join<T1, T2>(task_1: T1, task_2: T2) -> Join<T1::Output, T2::Output>
+pub async fn join<T1, T2, O1, O2>(task_1: T1, task_2: T2) -> Join<O1, O2>
 where
-	T1: Task,
-	T2: Task
+	T1: for<'a> Task<Output<'a> = O1>,
+	T2: for<'a> Task<Output<'a> = O2>
 {
-	/* Safety: this function always returns valid pointers */
-	let runtime = unsafe { internal_get_pulse_env().await.as_ref() };
+	let runtime = internal_get_pulse_env().await;
 
 	/* Safety: runtimes and executor live until there are no more workers */
 	unsafe { coroutines::join(runtime, task_1, task_2).await }
 }
 
 #[asynchronous]
-pub async fn select<T1, T2>(task_1: T1, task_2: T2) -> Select<T1::Output, T2::Output>
+pub async fn select<T1, T2, O1, O2>(task_1: T1, task_2: T2) -> Select<O1, O2>
 where
-	T1: Task,
-	T2: Task
+	T1: for<'a> Task<Output<'a> = O1>,
+	T2: for<'a> Task<Output<'a> = O2>
 {
-	/* Safety: this function always returns valid pointers */
-	let runtime = unsafe { internal_get_pulse_env().await.as_ref() };
+	let runtime = internal_get_pulse_env().await;
 
 	/* Safety: runtimes and executor live until there are no more workers */
 	unsafe { coroutines::select(runtime, task_1, task_2).await }
 }
 
 #[asynchronous]
-pub async fn spawn<T>(task: T) -> JoinHandle<T::Output>
+pub async fn spawn<T, Output>(task: T) -> JoinHandle<Output>
 where
-	T: Task + 'static
+	T: for<'a> Task<Output<'a> = Output> + 'static
 {
-	/* Safety: this function always returns valid pointers */
-	let runtime = unsafe { internal_get_pulse_env().await.as_ref() };
+	let runtime = internal_get_pulse_env().await;
 
 	/* Safety: task is static */
 	unsafe { coroutines::spawn(runtime, spawn_entry(task)) }
@@ -62,7 +56,8 @@ pub mod internal {
 	use super::*;
 
 	#[asynchronous]
-	pub async fn runtime() -> Ptr<Pulse> {
+	#[context('current)]
+	pub async unsafe fn runtime() -> &'current Pulse {
 		internal_get_pulse_env().await
 	}
 }
@@ -74,7 +69,7 @@ macro_rules! select_many {
 		/* Safety: runtimes and executor live until there are no more workers */
 		unsafe {
 			::xx_core::coroutines::select! {
-				$crate::ops::branch::internal::runtime().await.as_ref();
+				$crate::ops::branch::internal::runtime().await;
 				$($tokens)*
 			}
 		}

@@ -1,11 +1,14 @@
 #![allow(warnings)]
 
-use std::rc::Rc;
+use std::{
+	rc::Rc,
+	sync::atomic::{AtomicBool, Ordering}
+};
 
 use xx_core::{async_std::sync::Notify, coroutines::take_interrupt, pointer::Pinned};
 use xx_pulse::*;
 
-static mut EXITED: bool = false;
+static EXITED: AtomicBool = AtomicBool::new(false);
 
 #[asynchronous]
 async fn block2(notify: Pinned<Rc<Notify>>) {
@@ -32,7 +35,7 @@ async fn block(notify: Pinned<Rc<Notify>>) {
 		println!("run");
 	}
 
-	unsafe { EXITED = true };
+	EXITED.store(true, Ordering::Relaxed);
 
 	panic!("test this too");
 }
@@ -48,5 +51,5 @@ fn test_exit() {
 
 	spawn_it();
 
-	assert!(unsafe { EXITED });
+	assert!(EXITED.load(Ordering::Relaxed));
 }
