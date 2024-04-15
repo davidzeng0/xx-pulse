@@ -3,8 +3,8 @@
 use std::cell::Cell;
 
 use xx_core::{
-	container::zero_alloc::linked_list::*, coroutines::get_context, debug, fiber::*,
-	macros::container_of, opt::hint::*, pointer::*, runtime::join
+	container::zero_alloc::linked_list::*, debug, fiber::*, macros::container_of, opt::hint::*,
+	pointer::*, runtime::join
 };
 
 use super::*;
@@ -141,13 +141,17 @@ impl Runtime {
 		};
 
 		/* Safety: we are blocked until the future completes */
-		join(unsafe { block_on(block, resume, task) })
+		join(unsafe { future::block_on(block, resume, task) })
 	}
 }
 
 impl Drop for Runtime {
 	#[allow(clippy::multiple_unsafe_ops_per_block)]
 	fn drop(&mut self) {
+		/* note: calling `mem::forget` on the runtime is safe, because the runtime
+		 * and driver never get deallocated. when the workers try to use the driver,
+		 * it hangs indefinitely
+		 */
 		loop {
 			/* to prevent busy looping, move all our nodes to a new list */
 			let mut list = LinkedList::new();

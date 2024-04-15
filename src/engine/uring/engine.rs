@@ -3,14 +3,13 @@
 use std::{
 	cell::Cell,
 	os::fd::{AsFd, BorrowedFd},
-	ptr::slice_from_raw_parts_mut,
 	sync::atomic::{AtomicU32, Ordering}
 };
 
 use enumflags2::*;
 use xx_core::{
 	debug, error,
-	macros::panic_nounwind,
+	macros::{assert_unsafe_precondition, panic_nounwind},
 	opt::hint::*,
 	os::{error::*, mman::*, openat::*},
 	trace, warn
@@ -150,7 +149,7 @@ unsafe fn get_ref<'a, T>(map: &Map<'a>, off: u32) -> &'a T {
 }
 
 fn get_array<T>(map: &Map<'_>, off: u32, len: u32) -> MutPtr<[T]> {
-	slice_from_raw_parts_mut(get_ptr::<T>(map, off).as_mut_ptr(), len as usize).into()
+	MutPtr::slice_from_raw_parts(get_ptr::<T>(map, off), len as usize)
 }
 
 impl<'a> SubmissionQueue<'a> {
@@ -191,12 +190,15 @@ impl<'a> SubmissionQueue<'a> {
 
 	/// # Safety
 	/// index must be in range
-	unsafe fn write(&self, index: u32, entry: &SubmissionEntry) {
+	unsafe fn write(&self, index: u32, entry: SubmissionEntry) {
 		/* Safety: guaranteed by caller */
-		unsafe { *ptr!(self.entries=>get_unchecked_mut(index as usize)) = *entry }
+		unsafe { assert_unsafe_precondition!((index as usize) < self.entries.len()) };
+
+		/* Safety: guaranteed by caller */
+		unsafe { ptr!(self.entries=>[index as usize] = entry) }
 	}
 
-	fn write_next(&self, entry: &SubmissionEntry) {
+	fn push(&self, entry: SubmissionEntry) {
 		let tail = self.tail.get();
 
 		self.tail.set(tail.wrapping_add(1));
@@ -242,7 +244,10 @@ impl<'a> CompletionQueue<'a> {
 	/// index must be in bounds
 	unsafe fn read(&self, index: u32) -> CompletionEntry {
 		/* Safety: guaranteed by caller */
-		unsafe { *ptr!(self.entries=>get_unchecked(index as usize)) }
+		unsafe { assert_unsafe_precondition!((index as usize) < self.entries.len()) };
+
+		/* Safety: guaranteed by caller */
+		unsafe { ptr!(self.entries=>[index as usize]) }
 	}
 
 	fn read_ring(&self) -> (u32, u32) {
@@ -352,7 +357,9 @@ fn create_io_uring() -> Result<(IoRingFeatures, OwnedFd, Parameters)> {
 	let mut setup_flags = BitFlags::default();
 	let mut params = Parameters::default();
 
-	let flags = make_bitflags!(SetupFlag::{CompletionRingSize | Clamp | SubmitAll | CoopTaskrun | TaskRun | SingleIssuer | DeferTaskrun});
+	let flags = make_bitflags!(SetupFlag::{
+		CompletionRingSize | Clamp | SubmitAll | CoopTaskrun | TaskrunFlag | SingleIssuer | DeferTaskrun
+	});
 
 	for flag in flags {
 		if features.setup_flag_supported(flag) {
@@ -376,6 +383,13 @@ fn create_io_uring() -> Result<(IoRingFeatures, OwnedFd, Parameters)> {
 			:: Performance may be degraded.",
 			features.version()
 		);
+
+		if !features.feature_supported(Feature::ExtArg) {
+			warn!(
+				target: &ring,
+				"== Feature `ExtArg` not supported. The application *may* hang indefinitely."
+			);
+		}
 	}
 
 	match io_uring_setup(params.sq_entries, &mut params) {
@@ -422,7 +436,10 @@ impl IoUring {
 	}
 
 	#[inline(always)]
-	fn enter<F: Fn(&Self, u32) -> OsResult<i32>>(&self, f: F) -> Result<()> {
+	fn enter<F>(&self, func: F) -> Result<()>
+	where
+		F: Fn(&Self, u32) -> OsResult<i32>
+	{
 		self.queue.submission.sync();
 
 		let mut to_submit = self.to_submit.get();
@@ -437,7 +454,7 @@ impl IoUring {
 		self.to_submit.set(0);
 
 		loop {
-			match f(self, to_submit) {
+			match func(self, to_submit) {
 				#[allow(clippy::arithmetic_side_effects, clippy::cast_sign_loss)]
 				Ok(submitted) => {
 					to_submit -= submitted as u32;
@@ -455,11 +472,9 @@ impl IoUring {
 
 				Err(err) => {
 					break match err {
-						OsError::Time | OsError::Intr | OsError::Busy if to_submit == 0 => {
-							break Ok(())
-						}
+						OsError::Time | OsError::Intr | OsError::Busy if to_submit == 0 => Ok(()),
 
-						OsError::Again => return Err(Core::OutOfMemory.into()),
+						OsError::Again => Err(Core::OutOfMemory.into()),
 						_ => Err(err.into())
 					};
 				}
@@ -476,13 +491,13 @@ impl IoUring {
 			flags |= EnterFlag::GetEvents;
 		}
 
-		/* Safety: submitting the amount of sqes queued */
+		/* Safety: all sqes are valid */
 		self.enter(|this, submit| unsafe {
 			io_uring_enter(this.ring_fd.as_fd(), submit, 0, flags, None)
 		})
 	}
 
-	/// Compatibility function
+	/// Compatibility function for kernels without `ExtArg`
 	#[inline(never)]
 	fn enter_timeout(&self, timeout: u64) -> Result<()> {
 		let tail = self.queue.completion.read_ring().1;
@@ -508,7 +523,7 @@ impl IoUring {
 
 		self.start_async(op, ptr!(&NO_OP));
 
-		/* Safety: submitting the amount of sqes queued */
+		/* Safety: all sqes are valid */
 		self.enter(|this, submit| unsafe {
 			io_uring_enter(
 				this.ring_fd.as_fd(),
@@ -543,7 +558,7 @@ impl IoUring {
 		}
 
 		if likely(self.features.feature_supported(Feature::ExtArg)) {
-			/* Safety: submitting the sqes that were queued */
+			/* Safety: all sqes are valid */
 			self.enter(|this, submit| unsafe {
 				/*
 				 * the kernel doesn't read the timespec until it's actually time to wait for
@@ -581,6 +596,7 @@ impl IoUring {
 			let CompletionEntry { user_data, result, .. } =
 				/* Safety: masked */
 				unsafe { self.queue.completion.read(head & mask) };
+
 			/*
 			 * more requests may be queued in callback, so
 			 * update the cqe head here so that we have one more cqe
@@ -599,7 +615,7 @@ impl IoUring {
 
 	#[inline(always)]
 	fn push(&self, request: SubmissionEntry) {
-		self.queue.submission.write_next(&request);
+		self.queue.submission.push(request);
 
 		#[allow(clippy::arithmetic_side_effects)]
 		self.to_submit.set(self.to_submit.get() + 1);

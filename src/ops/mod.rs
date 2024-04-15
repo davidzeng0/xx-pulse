@@ -1,7 +1,4 @@
-use xx_core::{
-	coroutines::{block_on, get_context},
-	pointer::*
-};
+use xx_core::pointer::*;
 
 use super::*;
 

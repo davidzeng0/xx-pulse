@@ -22,6 +22,34 @@ impl File {
 		})
 	}
 
+	#[allow(clippy::impl_trait_in_params)]
+	pub async fn create(path: impl AsRef<Path>) -> Result<Self> {
+		Ok(Self {
+			fd: open(path.as_ref(), OpenFlag::Create | OpenFlag::WriteOnly, 0).await?,
+			offset: 0
+		})
+	}
+
+	#[allow(clippy::impl_trait_in_params)]
+	pub async fn read_to_end(path: impl AsRef<Path>, vec: &mut Vec<u8>) -> Result<usize> {
+		let mut file = Self::open(path).await?;
+
+		if let Ok(len) = file.stream_len().await {
+			vec.reserve(len.try_into().unwrap());
+		}
+
+		file.read_to_end(vec).await
+	}
+
+	#[allow(clippy::impl_trait_in_params)]
+	pub async fn load(path: impl AsRef<Path>) -> Result<Vec<u8>> {
+		let mut vec = Vec::new();
+
+		Self::read_to_end(path, &mut vec).await?;
+
+		Ok(vec)
+	}
+
 	pub async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
 		read_into!(buf);
 
@@ -99,7 +127,7 @@ impl Seek for File {
 
 		statx(
 			Some(self.fd.as_fd()),
-			"".as_ref(),
+			"",
 			AtFlag::EmptyPath.into(),
 			BitFlags::default(),
 			&mut stat

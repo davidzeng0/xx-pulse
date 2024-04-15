@@ -233,12 +233,13 @@ pub mod raw {
 	});
 }
 
-fn path_to_cstr(path: &Path) -> Result<CString> {
-	CString::new(path.as_os_str().as_bytes()).map_err(|_| Core::InvalidCStr.into())
+fn path_to_cstr(path: impl AsRef<Path>) -> Result<CString> {
+	CString::new(path.as_ref().as_os_str().as_bytes()).map_err(|_| Core::InvalidCStr.into())
 }
 
 #[asynchronous]
-pub async fn open(path: &Path, flags: BitFlags<OpenFlag>, mode: u32) -> Result<OwnedFd> {
+#[allow(clippy::impl_trait_in_params)]
+pub async fn open(path: impl AsRef<Path>, flags: BitFlags<OpenFlag>, mode: u32) -> Result<OwnedFd> {
 	let path = path_to_cstr(path)?;
 
 	/* Safety: lifetimes captured by this function are valid until it returns */
@@ -402,9 +403,10 @@ pub async fn fsync(file: BorrowedFd<'_>) -> Result<()> {
 }
 
 #[asynchronous]
+#[allow(clippy::impl_trait_in_params)]
 pub async fn statx(
-	dirfd: Option<BorrowedFd<'_>>, path: &Path, flags: BitFlags<AtFlag>, mask: BitFlags<StatxMask>,
-	statx: &mut Statx
+	dirfd: Option<BorrowedFd<'_>>, path: impl AsRef<Path>, flags: BitFlags<AtFlag>,
+	mask: BitFlags<StatxMask>, statx: &mut Statx
 ) -> Result<()> {
 	let dirfd = dirfd.map_or(OpenAt::CurrentWorkingDirectory as i32, |fd| fd.as_raw_fd());
 	let path = path_to_cstr(path)?;

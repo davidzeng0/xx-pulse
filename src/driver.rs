@@ -104,7 +104,12 @@ impl Driver {
 		xx_core::trace!(target: self, "## cancel_timer(request = {:?}) = Ok(reason = cancel)", timeout.request);
 
 		/* Safety: complete the future */
-		unsafe { Self::timer_complete(timeout, Err(Core::Interrupted("Timer cancelled").into())) };
+		unsafe {
+			Self::timer_complete(
+				timeout,
+				Err(Core::Interrupted("Timer cancelled".into()).into())
+			);
+		}
 
 		Ok(())
 	}

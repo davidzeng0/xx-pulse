@@ -4,7 +4,6 @@ use std::net::{SocketAddr, ToSocketAddrs};
 
 use xx_core::{
 	async_std::io::*,
-	coroutines::acquire_budget,
 	impls::{AsyncFn, AsyncFnOnce},
 	macros::*,
 	os::{epoll::PollFlag, error::OsError, inet::*, socket::*}
