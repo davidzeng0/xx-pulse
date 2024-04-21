@@ -16,8 +16,8 @@ pub mod ops;
 mod runtime;
 pub mod streams;
 
-pub use driver::DriverError;
 use driver::*;
+pub use driver::{DriverError, TimeoutFlag};
 use engine::*;
 pub use interval::*;
 pub use macros::*;

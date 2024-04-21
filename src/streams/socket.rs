@@ -374,6 +374,9 @@ macro_rules! socket_common {
 		wrapper_functions! {
 			inner = self.socket;
 
+			#[must_use]
+			pub fn fd(&self) -> BorrowedFd<'_>;
+
 			#[asynchronous]
 			pub async fn close(self) -> Result<()>;
 

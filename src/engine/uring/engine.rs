@@ -101,38 +101,42 @@ impl<'a> Rings<'a> {
 }
 
 #[allow(dead_code)]
+#[repr(C)]
 struct SubmissionQueue<'a> {
-	khead: &'a AtomicU32,
-	ktail: &'a AtomicU32,
 	kflags: &'a AtomicU32,
-	kdropped: &'a AtomicU32,
+	ktail: &'a AtomicU32,
 
-	array: MutPtr<[u32]>,
+	tail: Cell<u32>,
+	mask: u32,
 	entries: MutPtr<[SubmissionEntry]>,
 
-	mask: u32,
 	capacity: u32,
 
-	tail: Cell<u32>
+	/* unused */
+	khead: &'a AtomicU32,
+	kdropped: &'a AtomicU32,
+	array: MutPtr<[u32]>
 }
 
 #[allow(dead_code)]
+#[repr(C)]
 struct CompletionQueue<'a> {
 	khead: &'a AtomicU32,
 	ktail: &'a AtomicU32,
+	entries: MutPtr<[CompletionEntry]>,
+	mask: u32,
+
+	/* unused */
 	kflags: &'a AtomicU32,
 	koverflow: &'a AtomicU32,
-
-	entries: MutPtr<[CompletionEntry]>,
-
-	mask: u32,
 	capacity: u32
 }
 
 #[allow(dead_code)]
+#[repr(C)]
 struct Queue {
-	rings: Rings<'static>,
 	submission: SubmissionQueue<'static>,
+	rings: Rings<'static>,
 	completion: CompletionQueue<'static>
 }
 
@@ -283,13 +287,15 @@ impl Queue {
 	}
 }
 
+#[repr(C)]
 pub struct IoUring {
-	features: IoRingFeatures,
 	ring_fd: OwnedFd,
-	queue: Queue,
 
+	to_submit: Cell<u32>,
+	queue: Queue,
 	to_complete: Cell<u64>,
-	to_submit: Cell<u32>
+
+	features: IoRingFeatures
 }
 
 static NO_OP: Request<isize> = Request::no_op();
@@ -483,6 +489,7 @@ impl IoUring {
 	}
 
 	#[inline(never)]
+	#[cold]
 	fn flush(&self) -> Result<()> {
 		let mut flags = BitFlags::<EnterFlag>::default();
 
@@ -499,6 +506,7 @@ impl IoUring {
 
 	/// Compatibility function for kernels without `ExtArg`
 	#[inline(never)]
+	#[cold]
 	fn enter_timeout(&self, timeout: u64) -> Result<()> {
 		let tail = self.queue.completion.read_ring().1;
 
@@ -582,12 +590,11 @@ impl IoUring {
 	#[inline(always)]
 	fn run_events(&self, (mut head, tail): (u32, u32)) {
 		let mask = self.queue.completion.mask;
-
-		if head != tail {
-			trace!(target: self, ">> {} Completions", tail.wrapping_sub(head));
-		}
-
 		let count = tail.wrapping_sub(head);
+
+		if count > 0 {
+			trace!(target: self, ">> {} Completions", count);
+		}
 
 		#[allow(clippy::arithmetic_side_effects)]
 		self.to_complete.set(self.to_complete.get() - count as u64);
