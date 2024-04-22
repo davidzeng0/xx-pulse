@@ -140,9 +140,9 @@ struct Queue {
 	completion: CompletionQueue<'static>
 }
 
-fn get_ptr<T>(map: &Map<'_>, off: u32) -> MutPtr<T> {
-	#[allow(clippy::arithmetic_side_effects)]
-	(map.addr().cast::<u8>() + off as usize).cast()
+const unsafe fn get_ptr<T>(map: &Map<'_>, off: u32) -> MutPtr<T> {
+	/* Safety: guaranteed by caler */
+	unsafe { map.addr().cast::<u8>().add(off as usize).cast() }
 }
 
 /// # Safety
@@ -152,8 +152,11 @@ unsafe fn get_ref<'a, T>(map: &Map<'a>, off: u32) -> &'a T {
 	unsafe { get_ptr::<T>(map, off).as_ref() }
 }
 
-fn get_array<T>(map: &Map<'_>, off: u32, len: u32) -> MutPtr<[T]> {
-	MutPtr::slice_from_raw_parts(get_ptr::<T>(map, off), len as usize)
+unsafe fn get_array<T>(map: &Map<'_>, off: u32, len: u32) -> MutPtr<[T]> {
+	/* Safety: guaranteed by caller */
+	let base = unsafe { get_ptr::<T>(map, off) };
+
+	MutPtr::slice_from_raw_parts(base, len as usize)
 }
 
 impl<'a> SubmissionQueue<'a> {

@@ -274,11 +274,11 @@ impl Socket {
 	}
 
 	pub async fn poll(&mut self, flags: BitFlags<PollFlag>) -> Result<BitFlags<PollFlag>> {
-		let result = io::poll(self.fd(), flags).await?;
-		let flags = PollFlag::In | PollFlag::Out;
-
 		self.ready.remove(flags);
-		self.ready.insert(result & flags);
+
+		let result = io::poll(self.fd(), flags).await?;
+
+		self.ready.insert(result);
 
 		Ok(result)
 	}

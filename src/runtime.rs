@@ -167,9 +167,10 @@ impl Drop for Runtime {
 			}
 
 			while let Some(node) = list.pop_front() {
-				let worker = container_of!(node, PulseWorker => node);
-
 				/* Safety: all nodes are wrapped in PulseWorker */
+				let worker = unsafe { container_of!(node, PulseWorker => node) };
+
+				/* Safety: the worker must be valid */
 				let context = unsafe { ptr!(worker=>context) };
 
 				/* Safety: the worker may not exit immediately, and it unlinks itself on drop */
