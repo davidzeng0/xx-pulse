@@ -213,7 +213,7 @@ impl Driver {
 	#[inline(always)]
 	pub fn check_exiting(&self) -> Result<()> {
 		/* Safety: exclusive unsafe cell access */
-		if likely(!unsafe { self.inner.as_ref().exiting }) {
+		if likely(!unsafe { ptr!(self.inner=>exiting) }) {
 			Ok(())
 		} else {
 			Err(DriverError::Shutdown.into())
