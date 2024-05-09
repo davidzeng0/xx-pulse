@@ -25,21 +25,18 @@ jobs:
           submodules: true
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
       - name: Build image
         run: docker build -t rust .github/workflows
       - name: Finalize setup
         run: |
-          rm -rf .cargo
           echo ARGS=\"\$@\"\; docker run --rm -e VALGRINDFLAGS=\"$VALGRINDFLAGS\" -v .:/base rust \"\$ARGS\" > ./docker_run
           chmod +x ./docker_run
       - name: Check & Lint
         run: ./docker_run RUSTFLAGS=\"-D warnings\" cargo +nightly clippy --all-targets
       - name: Test debug build
-        run: ./docker_run cd tests \&\& cargo +nightly test --tests \&\& cargo +nightly valgrind test --tests
+        run: ./docker_run cargo +nightly test --tests \&\& cargo +nightly valgrind test --tests
       - name: Test release build
-        run: ./docker_run cd tests \&\& cargo +nightly test -r --tests \&\& cargo +nightly valgrind test -r --tests
+        run: ./docker_run cargo +nightly test -r --tests \&\& cargo +nightly valgrind test -r --tests
       - name: Generate test coverage
         run: ./docker_run cargo +nightly llvm-cov --all-features --workspace --codecov --output-path codecov.json
       - name: Upload coverage reports to Codecov
