@@ -26,9 +26,7 @@ pub fn main(_: TokenStream, item: TokenStream) -> TokenStream {
 		Err(err) => return err.to_compile_error().into()
 	};
 
-	let mut main = func.clone();
-
-	main.sig.asyncness.take();
+	func.sig.asyncness.take();
 
 	let pos = func.block.stmts.iter_mut().position(|stmt| {
 		let mut has_await = HasAwait(false);
@@ -39,20 +37,16 @@ pub fn main(_: TokenStream, item: TokenStream) -> TokenStream {
 
 	if let Some(pos) = pos {
 		let sync: Vec<_> = func.block.stmts.drain(0..pos).collect();
-		let (ident, block) = (&func.sig.ident, &func.block);
+		let block = &func.block;
 
-		func.attrs.clear();
-		main.block = parse_quote! {{
+		func.attrs
+			.push(parse_quote! { #[::xx_pulse::asynchronous(sync)] });
+		func.block = parse_quote! {{
 			#(#sync)*
 
-			::xx_pulse::Runtime::new()
-				.unwrap()
-				.block_on({
-					#[::xx_pulse::asynchronous(block)]
-					async fn #ident() #block
-				})
+			::xx_pulse::Runtime::new().unwrap().block_on(async #block)
 		}};
 	}
 
-	main.to_token_stream().into()
+	func.to_token_stream().into()
 }

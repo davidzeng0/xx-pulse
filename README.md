@@ -180,6 +180,11 @@ impl std::io::Read for Adapter<'_> {
             std::io::Read::read(adapter);
 
             // oh no! value might have been freed
+            //
+            // for the most part, it's safe to use thread locals
+            // in this manner. it's only when a fiber gets resumed
+            // as a result of the destructor running, that causes
+            // use-after-free
             do_something_sync_with(value);
         });
     }
