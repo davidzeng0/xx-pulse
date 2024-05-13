@@ -16,9 +16,8 @@ async fn internal_get_pulse_env() -> &'current Pulse {
 	/* Safety: we are in an async function */
 	let env = unsafe { get_context().await }.get_environment::<Pulse>();
 
-	#[allow(clippy::unwrap_used)]
-	env.ok_or_else(|| fmt_error!("Cannot use xx-pulse functions with a different runtime"))
-		.unwrap()
+	#[allow(clippy::expect_used)]
+	env.expect("Cannot use xx-pulse functions with a different runtime")
 }
 
 #[asynchronous]
