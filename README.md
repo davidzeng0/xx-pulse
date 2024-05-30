@@ -4,7 +4,9 @@
 
 `msrv: 1.79.0 stable`
 
-The fastest async runtime for rust (see [benchmarks](./benchmarks/README.md))
+Async rust runtime based on stackful coroutines.
+
+[Benchmarks](./benchmarks/README.md)
 
 Available I/O Backends:
 - io_uring (requires linux kernel version >= 5.6, recommended 5.11 or 6.1 for best performance)
@@ -150,8 +152,8 @@ async fn takes_trait(value: &mut dyn MyTrait) {
 
 Mix sync code and async code
 ```rust
-struct Adapter<'a> {
-    async_context: &'a Context
+struct Adapter<'ctx> {
+    async_context: &'ctx Context
 }
 
 #[asynchronous]
@@ -183,8 +185,8 @@ impl std::io::Read for Adapter<'_> {
             //
             // for the most part, it's safe to use thread locals
             // in this manner. it's only when a fiber gets resumed
-            // as a result of the destructor running, that causes
-            // use-after-free
+            // as a result of a thread local destructor running
+            // that causes use-after-free
             do_something_sync_with(value);
         });
     }
@@ -236,5 +238,6 @@ async fn fibonacci(n: i32) -> i32 {
     fibonacci(n - 1).await + fibonacci(n - 2).await
 }
 
+// Function even gets optimized from O(2^N) to O(N^2)
 println!("{}", fibonacci(20).await); // 6765
 ```
