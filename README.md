@@ -4,38 +4,25 @@
 
 `msrv: 1.79.0 stable`
 
-Async rust runtime based on stackful coroutines.
+Safe, performant, and ergonomic async rust runtime. <br>
+Same syntax as async rust. <br>
+Based on stackful coroutines. <br>
 
-[Benchmarks](./benchmarks/README.md)
-
-Available I/O Backends:
-- io_uring (requires linux kernel version >= 5.6, recommended 5.11 or 6.1 for best performance)
-- kqueue, iocp, epoll: contributions welcome
-
-Currently supported architectures:
-- amd64 (x86_64)
-- arm64 (aarch64)
-
-Memory safety status: FFI support required in Miri, currently checked by manual code review and tests
-
-Current and planned features:
-- [x] custom async desugaring
-- [x] low latency and zero overhead read/write APIs with the same ergonomics as `std::io`, now with 100% less allocations, `thread_local` lookups, memory copy, and passing owned buffers
-- [x] dynamic dispatch
-- [x] low overhead spawn, select, join
-- [x] safe async closures, async fn mut
-- [x] use sync code in an async manner, without rewriting existing sync code
-- [ ] multithreading
-- [ ] async drop (compiler support is ideal)
-- [ ] io_uring goodies (fixed file, buffer select, async drop support is ideal to implement ergonomically)
+- [Motivation and use cases](./Motivation.md) <br>
+- [Benchmarks](./benchmarks/README.md) <br>
+- [Getting started](#getting-started)
+- [Thread local safety](#thread-local-safety)
+- [Features and development stage](#features-and-development-stage)
 
 ### Note:
 This library is currently only available for Linux (contributions welcome).<br>
-For Windows and Mac users, running in Docker or WSL also work.
+For Windows and Mac users, running in Docker or WSL also work. See [features and development stage](#features-and-development-stage)
 
-### Echo server example
+### Getting started
 
-Add dependency
+The following is a simple echo server example
+
+#### Add dependency
 ```sh
 # support lib and async impls
 cargo add --git https://github.com/davidzeng0/xx-core.git xx-core
@@ -51,6 +38,9 @@ use xx_pulse::Tcp;
 #[xx_pulse::main]
 async fn main() {
     let listener = Tcp::bind("127.0.0.1:8080").await.unwrap();
+
+    // Can also timeout operations after 5s
+    let listener: Option<Result<TcpListener, _>> = Tcp::bind("...").timeout(xx_core::duration!(5 s)).await;
 
     loop {
         let (mut client, _) = listener.accept().await.unwrap();
@@ -76,168 +66,45 @@ async fn main() {
 }
 ```
 
-### Why Fibers?
+### Thread local safety
 
-Performance (inlining) (also see [switching](https://github.com/davidzeng0/xx-core/blob/main/src/coroutines/README.md))
+Thread local access is safe because of async/await syntax. <br>
+A compiler error prevents usage of `.await` in synchronous functions and closures. <br>
+xx-pulse uses cooperative scheduling, so it is impossble to suspend in a closure without `unsafe`. <br>
+See [using sync code as if it were async](./Motivation.md#use-sync-code-as-if-it-were-async)
+
 ```rust
-#[inline(never)] // applies the inline to the `.await`!
 #[asynchronous]
-async fn no_inline() {
-    // the call to `no_inline()` is inlined,
-    // but the await call to the body
-    // will not be inlined
-    ...
-}
+async fn try_use_thread_local() {
+	THREAD_LOCAL.with(|value| {
+		// OK
+		use_value_synchronously(value);
+	});
 
-#[inline(always)] // zero overhead calling!
-#[asynchronous]
-async fn always_inline() {
-    // the code below will be inlined
-    // into the calling function
-    ...
-}
-
-// the following two functions are identical in performance
-#[asynchronous]
-async fn layered() -> i32 {
-    #[asynchronous]
-    #[inline(always)]
-    async fn add(a: i32, b: i32) -> i32 {
-        a + b
-    }
-
-    #[asynchronous]
-    #[inline(always)]
-    async fn produce_first() -> i32 {
-        5
-    }
-
-    #[asynchronous]
-    #[inline(always)]
-    async fn produce_second() -> i32 {
-        7
-    }
-
-    let (a, b) = (
-        produce_first().await,
-        produce_second().await
-    );
-
-    add(a, b).await
-}
-
-#[asynchronous]
-async fn flattened() -> i32 {
-    12
+	THREAD_LOCAL.with(|value| {
+		// Compiler error: cannot use .await in a synchronous function/closure!
+		do_async_stuff().await;
+	});
 }
 ```
 
-Async trait dynamic dispatch with zero allocations
-```rust
-#[asynchronous]
-trait MyTrait {
-    // dynamic dispatch! no `Box::new`
-    async fn my_async_func(&mut self);
+### Features and development stage
 
-    // normal functions okay too
-    fn my_normal_func(&mut self);
-}
+Available I/O Backends:
+- io_uring (requires linux kernel version >= 5.6, recommended 5.11 or 6.1 for best performance)
+- kqueue, iocp, epoll: contributions welcome
 
-#[asynchronous]
-async fn takes_trait(value: &mut dyn MyTrait) {
-    value.my_async_func().await;
-    value.my_normal_func();
-}
-```
+Currently supported architectures:
+- amd64 (x86_64)
+- arm64 (aarch64)
 
-Mix sync code and async code
-```rust
-struct Adapter<'ctx> {
-    async_context: &'ctx Context
-}
-
-#[asynchronous]
-async fn read_inner(buf: &mut [u8]) {
-    ... // do a non-blocking read here, with async capabilities
-}
-
-impl std::io::Read for Adapter<'_> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        // # Safety
-        // Must ensure any lifetimes captured are valid across suspends.
-        //
-        // This also includes any lifetimes captured by sync code leading up
-        // to this function call.
-        unsafe {
-            scoped(self.async_context, read_inner(buf))
-        }
-
-        // For example, the following is invalid
-        THREAD_LOCAL.with(|value| {
-            // value might be freed after suspend!
-            unsafe { scoped(context, do_stuff_with(value)) }
-
-            // without any async. in this case, the constructor
-            // of `adapter` must be unsafe!
-            std::io::Read::read(adapter);
-
-            // oh no! value might have been freed
-            //
-            // for the most part, it's safe to use thread locals
-            // in this manner. it's only when a fiber gets resumed
-            // as a result of a thread local destructor running
-            // that causes use-after-free
-            do_something_sync_with(value);
-        });
-    }
-}
-
-#[asynchronous]
-async fn do_async_read(buf: &mut [u8]) -> std::io::Result<usize> {
-    // the magic words
-    let async_context = unsafe { get_context().await };
-    let mut reader = Adapter { async_context };
-
-    // do the sync read without blocking the thread
-    let read = std::io::Read::read(&mut reader);
-
-    read
-}
-```
-
-Async closures (no more poll functions or `impl Future for MyFuture`!)
-```rust
-#[asynchronous]
-async fn call_async_closure(mut func: impl AsyncFnMut<i32>) {
-    func.call_mut(5).await;
-    func.call_mut(42).await;
-}
-
-let mut num = 0;
-
-// note: rustc complains that its unstable, even though
-// the proc macro modifies the syntax
-//
-// use `|| async move`, which does the same thing, to remove
-// the error
-call_async_closure(async |val| {
-    num += val;
-}).await;
-
-println!("{num}!"); // 47!
-```
-
-Recursion (no allocation!)
-```rust
-#[asynchronous]
-async fn fibonacci(n: i32) -> i32 {
-    if n <= 2 {
-        return 1;
-    }
-
-    fibonacci(n - 1).await + fibonacci(n - 2).await
-}
-
-// Function even gets optimized from O(2^N) to O(N^2)
-println!("{}", fibonacci(20).await); // 6765
-```
+Current and planned features:
+- [x] custom async desugaring
+- [x] low latency and zero overhead read/write APIs with the same ergonomics as `std::io`, now with 100% less allocations, `thread_local` lookups, memory copy, and passing owned buffers
+- [x] dynamic dispatch
+- [x] low overhead spawn, select, join
+- [x] safe async closures, async fn mut
+- [x] use sync code in an async manner, without rewriting existing sync code
+- [ ] multithreading (in progress)
+- [ ] async drop (compiler support is ideal)
+- [ ] io_uring goodies (fixed file, buffer select, async drop support is ideal to implement ergonomically)
