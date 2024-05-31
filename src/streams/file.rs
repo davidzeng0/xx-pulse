@@ -81,7 +81,7 @@ impl File {
 	pub async fn seek(&mut self, seek: SeekFrom) -> Result<u64> {
 		self.offset = match seek {
 			SeekFrom::Start(pos) => pos,
-			SeekFrom::Current(rel) => self.offset.checked_add_signed(rel).ok_or(Core::Overflow)?,
+			SeekFrom::Current(rel) => self.offset.checked_add_signed(rel).unwrap(),
 			SeekFrom::End(rel) => self.stream_len().await?.checked_add_signed(rel).unwrap()
 		};
 

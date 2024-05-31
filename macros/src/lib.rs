@@ -39,8 +39,10 @@ pub fn main(_: TokenStream, item: TokenStream) -> TokenStream {
 		let sync: Vec<_> = func.block.stmts.drain(0..pos).collect();
 		let block = &func.block;
 
-		func.attrs
-			.push(parse_quote! { #[::xx_pulse::asynchronous(sync)] });
+		func.attrs.push(parse_quote! {
+			#[::xx_pulse::asynchronous(sync)]
+		});
+
 		func.block = parse_quote! {{
 			#(#sync)*
 

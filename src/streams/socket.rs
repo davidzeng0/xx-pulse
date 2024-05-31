@@ -136,15 +136,13 @@ impl Socket {
 			self,
 			buf,
 			PollFlag::In.into(),
-			|fd: BorrowedFd<'_>, buf: &mut &mut [u8]| {
-				/* Safety: buf is valid */
-				unsafe {
-					recv(
-						fd,
-						(*buf).into(),
-						flags | MessageFlag::DontWait | MessageFlag::NoSignal
-					)
-				}
+			/* Safety: buf is valid */
+			|fd: BorrowedFd<'_>, buf: &mut &mut [u8]| unsafe {
+				recv(
+					fd,
+					(*buf).into(),
+					flags | MessageFlag::DontWait | MessageFlag::NoSignal
+				)
 			},
 			|fd: BorrowedFd<'_>, buf: &mut &mut [u8]| async move {
 				check_interrupt_if_zero(io::recv(fd, buf, flags).await?).await
@@ -191,15 +189,13 @@ impl Socket {
 			self,
 			buf,
 			PollFlag::Out.into(),
-			|fd: BorrowedFd<'_>, buf: &mut &[u8]| {
-				/* Safety: buf is valid */
-				unsafe {
-					send(
-						fd,
-						(*buf).into(),
-						flags | MessageFlag::DontWait | MessageFlag::NoSignal
-					)
-				}
+			/* Safety: buf is valid */
+			|fd: BorrowedFd<'_>, buf: &mut &[u8]| unsafe {
+				send(
+					fd,
+					(*buf).into(),
+					flags | MessageFlag::DontWait | MessageFlag::NoSignal
+				)
 			},
 			|fd: BorrowedFd<'_>, buf: &mut &[u8]| async move {
 				check_interrupt_if_zero(io::send(fd, buf, flags).await?).await

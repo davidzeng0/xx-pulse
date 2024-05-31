@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 quote = "1.0.36"
-syn = { version = "2.0.60", features = ["full"] }
+syn = { version = "2.0.66", features = ["full"] }
 xx-macro-support = { git = "https://github.com/davidzeng0/xx-macro-support.git" }
 
 [lib]
@@ -26,6 +26,7 @@ unused_qualifications = "warn"
 variant_size_differences = "warn"
 
 [lints.clippy]
+field_reassign_with_default = "allow"
 cast_possible_truncation = "warn"
 cast_possible_wrap = "warn"
 cast_precision_loss = "warn"

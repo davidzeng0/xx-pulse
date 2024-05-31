@@ -1,29 +1,33 @@
 #![allow(clippy::multiple_unsafe_ops_per_block)]
 
 use std::{
-	cell::Cell,
-	os::fd::{AsFd, BorrowedFd},
-	sync::atomic::{AtomicU32, Ordering}
+	collections::VecDeque,
+	os::fd::{AsFd, AsRawFd, BorrowedFd},
+	sync::{
+		atomic::{AtomicU32, Ordering},
+		Mutex
+	}
 };
 
 use enumflags2::*;
 use xx_core::{
 	debug, error,
+	impls::Cell,
 	macros::{assert_unsafe_precondition, panic_nounwind},
 	opt::hint::*,
-	os::{error::*, mman::*, openat::*},
+	os::{error::*, eventfd::*, mman::*, openat::*, poll::PollFlag},
 	trace, warn
 };
 
 use super::*;
 
-struct Rings<'a> {
-	ring: Map<'a>,
-	separate_completion_ring: Option<Map<'a>>,
-	submission_entries: Map<'a>
+struct Rings<'mem> {
+	ring: Map<'mem>,
+	separate_completion_ring: Option<Map<'mem>>,
+	submission_entries: Map<'mem>
 }
 
-impl<'a> Rings<'a> {
+impl<'mem> Rings<'mem> {
 	#[allow(clippy::arithmetic_side_effects)]
 	const fn scale<T>(mut count: u32, offset: u32, wide: bool) -> usize {
 		if wide {
@@ -33,7 +37,7 @@ impl<'a> Rings<'a> {
 		offset as usize + size_of::<T>() * count as usize
 	}
 
-	fn map_memory(size: usize, offset: MmapOffsets, fd: BorrowedFd<'_>) -> OsResult<Map<'a>> {
+	fn map_memory(size: usize, offset: MmapOffsets, fd: BorrowedFd<'_>) -> OsResult<Map<'mem>> {
 		Builder::new(Type::Shared, size)
 			.protect(Protection::Read | Protection::Write)
 			.flag(Flag::Populate)
@@ -43,11 +47,11 @@ impl<'a> Rings<'a> {
 	}
 
 	#[allow(clippy::missing_const_for_fn)]
-	fn submission_ring(&self) -> &Map<'a> {
+	fn submission_ring(&self) -> &Map<'mem> {
 		&self.ring
 	}
 
-	fn completion_ring(&self) -> &Map<'a> {
+	fn completion_ring(&self) -> &Map<'mem> {
 		self.separate_completion_ring.as_ref().unwrap_or(&self.ring)
 	}
 
@@ -102,9 +106,9 @@ impl<'a> Rings<'a> {
 
 #[allow(dead_code)]
 #[repr(C)]
-struct SubmissionQueue<'a> {
-	kflags: &'a AtomicU32,
-	ktail: &'a AtomicU32,
+struct SubmissionQueue<'mem> {
+	kflags: &'mem AtomicU32,
+	ktail: &'mem AtomicU32,
 
 	tail: Cell<u32>,
 	mask: u32,
@@ -113,22 +117,22 @@ struct SubmissionQueue<'a> {
 	capacity: u32,
 
 	/* unused */
-	khead: &'a AtomicU32,
-	kdropped: &'a AtomicU32,
+	khead: &'mem AtomicU32,
+	kdropped: &'mem AtomicU32,
 	array: MutPtr<[u32]>
 }
 
 #[allow(dead_code)]
 #[repr(C)]
-struct CompletionQueue<'a> {
-	khead: &'a AtomicU32,
-	ktail: &'a AtomicU32,
+struct CompletionQueue<'mem> {
+	khead: &'mem AtomicU32,
+	ktail: &'mem AtomicU32,
 	entries: MutPtr<[CompletionEntry]>,
 	mask: u32,
 
 	/* unused */
-	kflags: &'a AtomicU32,
-	koverflow: &'a AtomicU32,
+	kflags: &'mem AtomicU32,
+	koverflow: &'mem AtomicU32,
 	capacity: u32
 }
 
@@ -147,7 +151,7 @@ const unsafe fn get_ptr<T>(map: &Map<'_>, off: u32) -> MutPtr<T> {
 
 /// # Safety
 /// the offset must be valid for the type T
-unsafe fn get_ref<'a, T>(map: &Map<'a>, off: u32) -> &'a T {
+unsafe fn get_ref<'mem, T>(map: &Map<'mem>, off: u32) -> &'mem T {
 	/* Safety: guaranteed by caller */
 	unsafe { get_ptr::<T>(map, off).as_ref() }
 }
@@ -159,11 +163,11 @@ unsafe fn get_array<T>(map: &Map<'_>, off: u32, len: u32) -> MutPtr<[T]> {
 	MutPtr::slice_from_raw_parts(base, len as usize)
 }
 
-impl<'a> SubmissionQueue<'a> {
+impl<'mem> SubmissionQueue<'mem> {
 	/// # Safety
 	/// `params` must be initialized by a successfull call to io_uring_setup
 	#[allow(unsafe_op_in_unsafe_fn)]
-	unsafe fn new(maps: &Rings<'a>, params: &Parameters) -> Self {
+	unsafe fn new(maps: &Rings<'mem>, params: &Parameters) -> Self {
 		let ring = maps.submission_ring();
 		let sq = SubmissionQueue {
 			khead: get_ref(ring, params.sq_off.head),
@@ -181,9 +185,11 @@ impl<'a> SubmissionQueue<'a> {
 			tail: Cell::new(0)
 		};
 
-		for (i, elem) in ptr!(sq.array=>iter_mut().enumerate()) {
+		/* Safety: valid array */
+		for (i, elem) in unsafe { sq.array.into_iter() }.enumerate() {
+			/* Safety: set index */
 			#[allow(clippy::cast_possible_truncation)]
-			(*elem = i as u32);
+			(unsafe { ptr!(*elem) = i as u32 });
 		}
 
 		sq
@@ -202,29 +208,30 @@ impl<'a> SubmissionQueue<'a> {
 		unsafe { assert_unsafe_precondition!((index as usize) < self.entries.len()) };
 
 		/* Safety: guaranteed by caller */
-		unsafe { ptr!(self.entries=>[index as usize] = entry) }
+		unsafe { ptr!(self.entries=>[index as usize] = entry) };
 	}
 
 	fn push(&self, entry: SubmissionEntry) {
 		let tail = self.tail.get();
 
-		self.tail.set(tail.wrapping_add(1));
+		#[allow(clippy::arithmetic_side_effects)]
+		self.tail.update(|tail| tail + 1);
 
 		/* Safety: tail is masked */
-		unsafe { self.write(tail & self.mask, entry) }
+		unsafe { self.write(tail & self.mask, entry) };
 	}
 
 	fn sync(&self) {
-		self.ktail.store(self.tail.get(), Ordering::Relaxed);
+		self.ktail.store(self.tail.get(), Ordering::Release);
 	}
 }
 
 #[allow(dead_code)]
-impl<'a> CompletionQueue<'a> {
+impl<'mem> CompletionQueue<'mem> {
 	/// # Safety
 	/// `params` must be initialized by a successfull call to io_uring_setup
 	#[allow(unsafe_op_in_unsafe_fn)]
-	unsafe fn new(maps: &Rings<'a>, params: &Parameters) -> Self {
+	unsafe fn new(maps: &Rings<'mem>, params: &Parameters) -> Self {
 		let ring = maps.completion_ring();
 
 		CompletionQueue {
@@ -289,19 +296,6 @@ impl Queue {
 			.intersects(SubmissionRingFlag::CqOverflow | SubmissionRingFlag::TaskRun)
 	}
 }
-
-#[repr(C)]
-pub struct IoUring {
-	ring_fd: OwnedFd,
-
-	to_submit: Cell<u32>,
-	queue: Queue,
-	to_complete: Cell<u64>,
-
-	features: IoRingFeatures
-}
-
-static NO_OP: Request<isize> = Request::no_op();
 
 fn create_io_uring() -> Result<(IoRingFeatures, OwnedFd, Parameters)> {
 	struct IoUringSetup {}
@@ -392,13 +386,6 @@ fn create_io_uring() -> Result<(IoRingFeatures, OwnedFd, Parameters)> {
 			:: Performance may be degraded.",
 			features.version()
 		);
-
-		if !features.feature_supported(Feature::ExtArg) {
-			warn!(
-				target: &ring,
-				"== Feature `ExtArg` not supported. The application *may* hang indefinitely."
-			);
-		}
 	}
 
 	match io_uring_setup(params.sq_entries, &mut params) {
@@ -427,7 +414,68 @@ fn create_io_uring() -> Result<(IoRingFeatures, OwnedFd, Parameters)> {
 	}
 }
 
+#[repr(C)]
+pub struct IoUring {
+	ring_fd: OwnedFd,
+
+	to_submit: Cell<u32>,
+	queue: Queue,
+	to_complete: Cell<u64>,
+
+	features: IoRingFeatures,
+
+	expected_wakes: Cell<usize>,
+	wake_queue: Mutex<VecDeque<ReqPtr<()>>>,
+
+	event_fd: EventFd,
+	event_request: Request<isize>
+}
+
+static NO_OP: Request<isize> = Request::no_op();
+
 impl IoUring {
+	unsafe fn process_wake(_: ReqPtr<isize>, arg: Ptr<()>, events: isize) {
+		/* Safety: ptr is valid */
+		let this = unsafe { arg.cast::<Self>().as_ref() };
+
+		let events = Engine::result_for_poll(events)
+			.unwrap_or_else(|err| panic_nounwind!("Failed to poll event fd: {:?}", err));
+		let flags = BitFlags::from_bits_truncate(events);
+
+		if flags.intersects(PollFlag::Error) {
+			panic_nounwind!("Error flag on event fd");
+		}
+
+		if !flags.intersects(PollFlag::In) {
+			this.poll_wake();
+
+			return;
+		}
+
+		#[allow(clippy::unwrap_used)]
+		let mut queue = this.wake_queue.lock().unwrap();
+
+		#[allow(clippy::arithmetic_side_effects)]
+		let wakes = this.expected_wakes.update(|count| count - queue.len());
+
+		for request in queue.drain(..) {
+			/* Safety: complete the future */
+			unsafe { Request::complete(request, ()) };
+		}
+
+		/* finish up reading the event fd with the lock held. resuming woken tasks
+		 * with low latency takes priority */
+		this.event_fd
+			.read()
+			.unwrap_or_else(|err| panic_nounwind!("Failed to read event fd: {:?}", err));
+
+		drop(queue);
+
+		if wakes != 0 {
+			this.poll_wake();
+		}
+	}
+
 	pub fn new() -> Result<Self> {
 		let (features, ring_fd, params) = create_io_uring()?;
 		let rings = Rings::new(ring_fd.as_fd(), &params)?;
@@ -439,8 +487,16 @@ impl IoUring {
 			features,
 			ring_fd,
 			queue,
+
 			to_submit: Cell::new(0),
-			to_complete: Cell::new(0)
+			to_complete: Cell::new(0),
+
+			expected_wakes: Cell::new(0),
+			wake_queue: Mutex::default(),
+
+			event_fd: EventFd::new(CreateFlag::NonBlock.into())?,
+			/* Safety: events does not unwind */
+			event_request: unsafe { Request::new(Ptr::null(), Self::process_wake) }
 		})
 	}
 
@@ -451,16 +507,14 @@ impl IoUring {
 	{
 		self.queue.submission.sync();
 
-		let mut to_submit = self.to_submit.get();
+		let mut to_submit = self.to_submit.replace(0);
 
 		if to_submit != 0 {
 			trace!(target: self, "<< {} Operations", to_submit);
 		}
 
 		#[allow(clippy::arithmetic_side_effects)]
-		self.to_complete
-			.set(self.to_complete.get() + to_submit as u64);
-		self.to_submit.set(0);
+		self.to_complete.update(|count| count + to_submit as u64);
 
 		loop {
 			match func(self, to_submit) {
@@ -482,7 +536,6 @@ impl IoUring {
 				Err(err) => {
 					break match err {
 						OsError::Time | OsError::Intr | OsError::Busy if to_submit == 0 => Ok(()),
-
 						OsError::Again => Err(Core::OutOfMemory.into()),
 						_ => Err(err.into())
 					};
@@ -491,8 +544,6 @@ impl IoUring {
 		}
 	}
 
-	#[inline(never)]
-	#[cold]
 	fn flush(&self) -> Result<()> {
 		let mut flags = BitFlags::<EnterFlag>::default();
 
@@ -510,7 +561,7 @@ impl IoUring {
 	/// Compatibility function for kernels without `ExtArg`
 	#[inline(never)]
 	#[cold]
-	fn enter_timeout(&self, timeout: u64) -> Result<()> {
+	fn submit_and_wait_compat(&self, mut timeout: u64) -> Result<()> {
 		let tail = self.queue.completion.read_ring().1;
 
 		self.flush()?;
@@ -525,10 +576,13 @@ impl IoUring {
 			return Ok(());
 		}
 
-		let ts = TimeSpec {
-			nanos: timeout.try_into().map_err(|_| Core::Overflow)?,
-			sec: 0
-		};
+		/* limit the timeout to one second
+		 * on these older kernels to prevent hang
+		 */
+		timeout = timeout.min(1_000_000_000);
+
+		#[allow(clippy::unwrap_used)]
+		let ts = TimeSpec { nanos: timeout.try_into().unwrap(), sec: 0 };
 
 		let op = Op::timeout(ptr!(&ts), 1, 0);
 
@@ -543,18 +597,17 @@ impl IoUring {
 				EnterFlag::GetEvents.into(),
 				None
 			)
-		})?;
+		})
+		.unwrap_or_else(|err| panic_nounwind!("Failed to submit timer {:?}", err));
 
 		/* the kernel received our timeout, we can safely release `ts` */
 		Ok(())
 	}
 
 	fn submit_and_wait(&self, timeout: u64) -> Result<(u32, u32)> {
-		let mut wait = 0;
+		let wait = timeout != 0;
 
-		if likely(timeout != 0) {
-			wait = 1;
-		} else if unlikely(self.to_submit.get() == 0) {
+		if unlikely(self.to_submit.get() == 0) {
 			let ring = self.queue.completion.read_ring();
 
 			if ring.0 != ring.1 {
@@ -562,7 +615,7 @@ impl IoUring {
 				return Ok(ring);
 			}
 
-			if !self.queue.needs_enter() {
+			if !self.queue.needs_enter() && !wait {
 				/* no pending completions, no submissions, nothing to wait for, nothing to */
 				return Ok(ring);
 			}
@@ -578,49 +631,77 @@ impl IoUring {
 				io_uring_enter_timeout(
 					this.ring_fd.as_fd(),
 					submit,
-					wait,
+					wait as u32,
 					EnterFlag::GetEvents.into(),
 					timeout
 				)
 			})?;
 		} else {
-			self.enter_timeout(timeout)?;
+			self.submit_and_wait_compat(timeout)?;
 		}
 
 		Ok(self.queue.completion.read_ring())
 	}
 
 	#[inline(always)]
-	fn run_events(&self, (mut head, tail): (u32, u32)) {
+	fn run_events(&self, (mut head, mut tail): (u32, u32)) {
 		let mask = self.queue.completion.mask;
 		let count = tail.wrapping_sub(head);
 
-		if count > 0 {
-			trace!(target: self, ">> {} Completions", count);
+		if count == 0 {
+			return;
 		}
 
-		#[allow(clippy::arithmetic_side_effects)]
-		self.to_complete.set(self.to_complete.get() - count as u64);
+		trace!(target: self, ">> {} Completions", count);
 
-		while head != tail {
+		#[allow(clippy::arithmetic_side_effects)]
+		self.to_complete.update(|complete| complete - count as u64);
+
+		let complete = |index, update_head: Option<&mut u32>| {
 			let CompletionEntry { user_data, result, .. } =
 				/* Safety: masked */
-				unsafe { self.queue.completion.read(head & mask) };
+				unsafe { self.queue.completion.read(index & mask) };
 
-			/*
-			 * more requests may be queued in callback, so
-			 * update the cqe head here so that we have one more cqe
-			 * available for completions before overflow occurs
-			 */
-			head = head.wrapping_add(1);
-			self.queue.completion.khead.store(head, Ordering::Release);
+			if let Some(head) = update_head {
+				/*
+				 * more requests may be queued in callback, so
+				 * update the cqe head here so that we have one more cqe
+				 * available for completions before overflow occurs
+				 */
+				*head = head.wrapping_add(1);
+				self.queue.completion.khead.store(*head, Ordering::Release);
+			}
 
 			#[allow(clippy::cast_possible_truncation)]
 			let request = Ptr::from_int_addr(user_data as usize);
 
 			/* Safety: complete the future */
 			unsafe { Request::complete(request, result as isize) };
+		};
+
+		/* prevent this entry from accesed in the loop */
+		tail = tail.wrapping_sub(1);
+
+		/* complete the last first as the relevant data may still be in cache
+		 * TODO: maybe do this for submission as well?
+		 */
+		complete(tail, None);
+
+		while head != tail {
+			complete(head, Some(&mut head));
 		}
+
+		self.queue
+			.completion
+			.khead
+			.store(head.wrapping_add(1), Ordering::Release);
+	}
+
+	#[cold]
+	#[inline(never)]
+	fn push_flush(&self) {
+		self.flush()
+			.unwrap_or_else(|err| panic_nounwind!("Failed to flush submission ring: {:?}", err));
 	}
 
 	#[inline(always)]
@@ -628,13 +709,13 @@ impl IoUring {
 		self.queue.submission.push(request);
 
 		#[allow(clippy::arithmetic_side_effects)]
-		self.to_submit.set(self.to_submit.get() + 1);
+		self.to_submit.update(|count| count + 1);
 
-		if unlikely(self.to_submit.get() >= self.queue.submission.capacity) {
-			if let Err(err) = self.flush() {
-				panic_nounwind!("Failed to flush submission ring: {:?}", err);
-			}
+		if likely(self.to_submit.get() < self.queue.submission.capacity) {
+			return;
 		}
+
+		self.push_flush();
 	}
 
 	#[inline(always)]
@@ -645,18 +726,63 @@ impl IoUring {
 
 		None
 	}
+
+	fn poll_wake(&self) {
+		/* Safety: args are valid */
+		unsafe {
+			self.poll(
+				self.event_fd.fd().as_raw_fd(),
+				PollFlag::In as u32,
+				ptr!(&self.event_request)
+			)
+		};
+	}
 }
 
-impl EngineImpl for IoUring {
-	#[inline(always)]
+impl Pin for IoUring {
+	unsafe fn pin(&mut self) {
+		let arg = ptr!(&*self);
+
+		self.event_request.set_arg(arg.cast());
+	}
+}
+
+/* Safety: functions don't panic */
+unsafe impl EngineImpl for IoUring {
 	fn has_work(&self) -> bool {
 		self.to_complete.get() != 0 || self.to_submit.get() != 0
 	}
 
+	#[inline]
 	fn work(&self, timeout: u64) -> Result<()> {
 		let events = self.submit_and_wait(timeout)?;
 
 		self.run_events(events);
+
+		Ok(())
+	}
+
+	fn prepare_wake(&self) -> Result<()> {
+		#[allow(clippy::arithmetic_side_effects)]
+		if self.expected_wakes.update(|count| count + 1) == 1 {
+			self.poll_wake();
+		}
+
+		Ok(())
+	}
+
+	fn wake(&self, request: ReqPtr<()>) -> Result<()> {
+		#[allow(clippy::unwrap_used)]
+		let mut queue = self.wake_queue.lock().unwrap();
+		let wake = queue.is_empty();
+
+		queue.push_back(request);
+
+		drop(queue);
+
+		if wake {
+			self.event_fd.write(1)?;
+		}
 
 		Ok(())
 	}

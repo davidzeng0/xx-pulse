@@ -3,27 +3,30 @@
 use std::cell::Cell;
 
 use xx_core::{
-	container::zero_alloc::linked_list::*, debug, fiber::*, macros::container_of, opt::hint::*,
-	pointer::*, runtime::join
+	container::zero_alloc::linked_list::*, debug, fiber::*, macros::container_of, pointer::*,
+	runtime::join
 };
 
 use super::*;
 
-pub struct Pulse {
+pub struct PulseContext {
 	pub(crate) context: Context,
 	pub(crate) driver: Ptr<Driver>,
 	pub(crate) executor: Ptr<Executor>,
 	pub(crate) workers: Ptr<LinkedList>
 }
 
-impl Pulse {
+impl PulseContext {
 	/// # Safety
 	/// See `Context::run`
 	/// the executor, driver, and worker must live for self
 	unsafe fn new(driver: Ptr<Driver>, executor: Ptr<Executor>, workers: Ptr<LinkedList>) -> Self {
+		/* Safety: guaranteed by caller */
+		let waker = unsafe { ptr!(driver=>waker()) };
+
 		Self {
 			/* Safety: guaranteed by caller */
-			context: unsafe { Context::new::<Self>() },
+			context: unsafe { Context::new::<Self>(Some(waker)) },
 			driver,
 			executor,
 			workers
@@ -32,7 +35,7 @@ impl Pulse {
 }
 
 /* Safety: functions don't panic */
-unsafe impl Environment for Pulse {
+unsafe impl Environment for PulseContext {
 	fn context(&self) -> &Context {
 		&self.context
 	}
@@ -42,7 +45,7 @@ unsafe impl Environment for Pulse {
 	}
 
 	unsafe fn from_context(context: &Context) -> &Self {
-		let context = container_of!(ptr!(context), Self => context);
+		let context = container_of!(ptr!(context), Self=>context);
 
 		/* Safety: guaranteed by caller */
 		unsafe { context.as_ref() }
@@ -106,13 +109,13 @@ impl Runtime {
 
 	pub fn block_on<T, Output>(&self, task: T) -> Output
 	where
-		T: for<'a> Task<Output<'a> = Output>
+		T: for<'ctx> Task<Output<'ctx> = Output>
 	{
 		/* Safety: the env lives until the task finishes */
 		#[allow(clippy::multiple_unsafe_ops_per_block)]
 		let task = unsafe {
 			coroutines::spawn_task(
-				Pulse::new(
+				PulseContext::new(
 					ptr!(&self.driver),
 					ptr!(&self.executor),
 					ptr!(&self.workers)
@@ -122,23 +125,9 @@ impl Runtime {
 		};
 
 		let running = Cell::new(true);
-		let block = |_| loop {
-			let timeout = self.driver.run_timers();
 
-			if unlikely(!running.get()) {
-				break;
-			}
-
-			self.driver.park(timeout);
-
-			if unlikely(!running.get()) {
-				break;
-			}
-		};
-
-		let resume = || {
-			running.set(false);
-		};
+		let block = |_| self.driver.block_while(|| running.get());
+		let resume = || running.set(false);
 
 		/* Safety: we are blocked until the future completes */
 		join(unsafe { future::block_on(block, resume, task) })
@@ -162,22 +151,21 @@ impl Drop for Runtime {
 			 */
 			unsafe { self.workers.move_elements(&list) };
 
-			if list.empty() {
+			if list.is_empty() {
 				break;
 			}
 
 			while let Some(node) = list.pop_front() {
 				/* Safety: all nodes are wrapped in PulseWorker */
-				let worker = unsafe { container_of!(node, PulseWorker => node) };
+				let worker = unsafe { container_of!(node, PulseWorker=>node) };
 
 				/* Safety: the worker must be valid */
 				let context = unsafe { ptr!(worker=>context) };
 
-				/* Safety: the worker may not exit immediately, and it unlinks itself on drop */
+				/* Safety: the worker may not exit immediately, but it unlinks itself on drop */
 				unsafe { self.workers.append(node.as_ref()) };
 
-				/* Safety: signal the task to interrupt. when the worker exits, it unlinks
-				 * itself */
+				/* Safety: signal the task to interrupt */
 				let result = unsafe { Context::interrupt(context) };
 
 				if let Err(err) = &result {
@@ -199,6 +187,7 @@ impl Pin for Runtime {
 			self.executor.pin();
 			self.executor.set_pool(ptr!(&self.pool));
 			self.workers.pin();
+			self.driver.pin();
 		}
 	}
 }

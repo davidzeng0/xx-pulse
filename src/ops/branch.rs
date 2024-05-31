@@ -4,7 +4,7 @@ use super::*;
 #[allow(clippy::multiple_unsafe_ops_per_block)]
 pub(crate) async fn spawn_entry<T, Output>(task: T) -> Output
 where
-	T: for<'a> Task<Output<'a> = Output>
+	T: for<'ctx> Task<Output<'ctx> = Output>
 {
 	let workers = internal_get_pulse_env().await.workers;
 
@@ -20,8 +20,8 @@ where
 #[asynchronous]
 pub async fn join<T1, T2, O1, O2>(task_1: T1, task_2: T2) -> Join<O1, O2>
 where
-	T1: for<'a> Task<Output<'a> = O1>,
-	T2: for<'a> Task<Output<'a> = O2>
+	T1: for<'ctx> Task<Output<'ctx> = O1>,
+	T2: for<'ctx> Task<Output<'ctx> = O2>
 {
 	let runtime = internal_get_pulse_env().await;
 
@@ -32,8 +32,8 @@ where
 #[asynchronous]
 pub async fn select<T1, T2, O1, O2>(task_1: T1, task_2: T2) -> Select<O1, O2>
 where
-	T1: for<'a> Task<Output<'a> = O1>,
-	T2: for<'a> Task<Output<'a> = O2>
+	T1: for<'ctx> Task<Output<'ctx> = O1>,
+	T2: for<'ctx> Task<Output<'ctx> = O2>
 {
 	let runtime = internal_get_pulse_env().await;
 
@@ -44,7 +44,7 @@ where
 #[asynchronous]
 pub async fn spawn<T, Output>(task: T) -> JoinHandle<Output>
 where
-	T: for<'a> Task<Output<'a> = Output> + 'static
+	T: for<'ctx> Task<Output<'ctx> = Output> + 'static
 {
 	let runtime = internal_get_pulse_env().await;
 
@@ -57,7 +57,7 @@ pub mod internal {
 
 	#[asynchronous]
 	#[context('current)]
-	pub async unsafe fn runtime() -> &'current Pulse {
+	pub async unsafe fn runtime() -> &'current PulseContext {
 		internal_get_pulse_env().await
 	}
 }

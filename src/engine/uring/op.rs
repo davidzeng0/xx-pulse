@@ -4,11 +4,13 @@
 	clippy::cast_possible_wrap
 )]
 
-use xx_core::os::{epoll::*, iovec::raw::*, openat2::OpenHow};
+use xx_core::{
+	os::{epoll::*, iovec::raw::*, openat2::OpenHow},
+	static_assertions::const_assert
+};
 
 use super::*;
 
-#[allow(clippy::field_reassign_with_default)]
 fn new_op(op: OpCode) -> SubmissionEntry {
 	let mut entry = SubmissionEntry::default();
 
@@ -152,14 +154,17 @@ impl Op {
 		entry
 	}
 
+	#[allow(clippy::cast_possible_truncation)]
 	pub fn openat2(
 		dfd: i32, path: Ptr<()>, how: MutPtr<OpenHow>, file_index: u32
 	) -> SubmissionEntry {
+		const_assert!(size_of::<OpenHow>() <= u32::MAX as usize);
+
 		let mut entry = new_op(OpCode::OpenAt2);
 
 		entry.fd = dfd;
 		entry.addr.addr = path.int_addr() as u64;
-		entry.len = size_of::<OpenHow>().try_into().unwrap();
+		entry.len = size_of::<OpenHow>() as u32;
 		entry.off.addr = how.int_addr() as u64;
 		entry.buf = 0;
 		entry.file.file_index = file_index;

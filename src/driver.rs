@@ -1,9 +1,10 @@
 #![allow(unreachable_pub)]
 
-use std::{collections::BTreeSet, os::fd::RawFd};
+use std::{cell::Cell, collections::BTreeSet, os::fd::RawFd};
 
 use enumflags2::*;
 use xx_core::{
+	coroutines::{Waker, WakerVTable},
 	macros::{duration, panic_nounwind},
 	opt::hint::*,
 	os::{
@@ -16,18 +17,31 @@ use xx_core::{
 
 use super::*;
 
-#[bitflags]
-#[repr(u32)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum TimeoutFlag {
-	Abs = 1 << 0
+unsafe fn prepare(ptr: Ptr<()>) {
+	let driver = ptr.cast::<Driver>();
+
+	/* Safety: ptr is valid */
+	let result = unsafe { ptr!(driver=>io_engine.prepare_wake()) };
+
+	result.unwrap_or_else(|err| {
+		panic_nounwind!(
+			"Fatal error: failed to prepare wake on I/O engine: {:?}",
+			err
+		)
+	});
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-struct Timeout {
-	expire: u64,
-	request: ReqPtr<Result<()>>
+unsafe fn wake(ptr: Ptr<()>, request: ReqPtr<()>) {
+	let driver = ptr.cast::<Driver>();
+
+	/* Safety: this function call is thread safe */
+	let result = unsafe { ptr!(driver=>io_engine.wake(request)) };
+
+	result
+		.unwrap_or_else(|err| panic_nounwind!("Fatal error: failed to wake I/O engine: {:?}", err));
 }
+
+static WAKER: WakerVTable = unsafe { WakerVTable::new(prepare, wake) };
 
 #[allow(clippy::module_name_repetitions, missing_copy_implementations)]
 #[errors]
@@ -39,35 +53,43 @@ pub enum DriverError {
 	TimerNotFound
 }
 
-struct DriverInner {
-	timers: BTreeSet<Timeout>,
-	exiting: bool
+#[bitflags]
+#[repr(u32)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TimeoutFlag {
+	Abs = 1 << 0
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+struct Timeout {
+	expire: u64,
+	request: ReqPtr<Result<()>>
 }
 
 pub struct Driver {
-	inner: UnsafeCell<DriverInner>,
+	timers: UnsafeCell<BTreeSet<Timeout>>,
+	exiting: Cell<bool>,
 	io_engine: Engine
 }
 
 impl Driver {
 	pub fn new() -> Result<Self> {
 		Ok(Self {
-			inner: UnsafeCell::new(DriverInner { timers: BTreeSet::new(), exiting: false }),
+			timers: UnsafeCell::new(BTreeSet::new()),
+			exiting: Cell::new(false),
 			io_engine: Engine::new()?
 		})
 	}
 
 	#[inline(always)]
 	fn try_time() -> Result<u64> {
-		time::time(ClockId::Monotonic)
+		time::nanotime(ClockId::Monotonic)
 	}
 
 	#[inline(always)]
 	fn time_or_abort() -> u64 {
-		match Self::try_time() {
-			Ok(time) => time,
-			Err(err) => panic_nounwind!("Failed to read the clock: {:?}", err)
-		}
+		Self::try_time()
+			.unwrap_or_else(|err| panic_nounwind!("Failed to read the clock: {:?}", err))
 	}
 
 	#[allow(clippy::expect_used)]
@@ -80,22 +102,14 @@ impl Driver {
 		unsafe { Request::complete(timeout.request, result) };
 	}
 
-	fn expire_first_timer(timers: &mut BTreeSet<Timeout>, result: Result<()>) {
-		#[allow(clippy::unwrap_used)]
-		let timeout = timers.pop_first().unwrap();
-
-		/* Safety: complete the future */
-		unsafe { Self::timer_complete(timeout, result) };
-	}
-
 	fn queue_timer(&self, timer: Timeout) {
 		/* Safety: exclusive unsafe cell access */
-		unsafe { ptr!(self.inner=>timers.insert(timer)) };
+		unsafe { ptr!(self.timers=>insert(timer)) };
 	}
 
 	fn cancel_timer(&self, timer: Timeout) -> Result<()> {
 		/* Safety: we have exclusive mutable access until expire */
-		let timeout = match unsafe { ptr!(self.inner=>timers.take(&timer)) } {
+		let timeout = match unsafe { ptr!(self.timers=>take(&timer)) } {
 			Some(timeout) => timeout,
 			None => return Err(DriverError::TimerNotFound.into())
 		};
@@ -115,9 +129,9 @@ impl Driver {
 	}
 
 	#[future]
-	pub fn timeout(&self, mut expire: u64, flags: BitFlags<TimeoutFlag>) -> Result<()> {
+	pub fn timeout(&self, mut expire: u64, flags: BitFlags<TimeoutFlag>, request: _) -> Result<()> {
 		#[cancel]
-		fn cancel(&self, expire: u64) -> Result<()> {
+		fn cancel(&self, expire: u64, request: _) -> Result<()> {
 			self.cancel_timer(Timeout { expire, request })
 		}
 
@@ -125,8 +139,9 @@ impl Driver {
 			return Progress::Done(Err(err));
 		}
 
+		#[allow(clippy::expect_used)]
 		if !flags.intersects(TimeoutFlag::Abs) {
-			expire = expire.saturating_add(Self::time());
+			expire = expire.checked_add(Self::time()).expect("Timeout overflow");
 		}
 
 		#[cfg(feature = "tracing-ext")]
@@ -138,7 +153,7 @@ impl Driver {
 	}
 
 	#[inline(always)]
-	pub fn run_timers(&self) -> u64 {
+	fn run_timers(&self) -> u64 {
 		#[allow(clippy::cast_possible_truncation)]
 		let mut timeout = duration!(1 h).as_nanos() as u64;
 		let mut ran = false;
@@ -146,7 +161,7 @@ impl Driver {
 
 		loop {
 			/* Safety: we have mutable access until expire */
-			let timers = unsafe { &mut ptr!(self.inner=>timers) };
+			let timers = unsafe { &mut ptr!(*self.timers) };
 			let timer = match timers.first() {
 				None => break,
 				Some(timer) => timer
@@ -167,33 +182,58 @@ impl Driver {
 			#[cfg(feature = "tracing-ext")]
 			xx_core::trace!(target: self, "## run_timers: complete(request = {:?}, reason = timeout)", timer.request);
 
-			Self::expire_first_timer(timers, Ok(()));
+			#[allow(clippy::unwrap_used)]
+			let timer = timers.pop_first().unwrap();
+
+			/* Safety: complete the future */
+			unsafe { Self::timer_complete(timer, Ok(())) };
 		}
 
 		timeout
 	}
 
 	#[inline(always)]
-	pub fn park(&self, timeout: u64) {
-		match self.io_engine.work(timeout) {
-			Ok(()) => (),
-			Err(err) => panic_nounwind!("Fatal error from engine: {:?}", err)
+	fn park(&self, timeout: u64) {
+		self.io_engine
+			.work(timeout)
+			.unwrap_or_else(|err| panic_nounwind!("Fatal error from engine: {:?}", err));
+	}
+
+	pub fn block_while<F>(&self, block: F)
+	where
+		F: Fn() -> bool
+	{
+		loop {
+			let timeout = self.run_timers();
+
+			if unlikely(!block()) {
+				break;
+			}
+
+			self.park(timeout);
+
+			if unlikely(!block()) {
+				break;
+			}
 		}
 	}
 
 	pub fn exit(&self) {
-		/* Safety: exclusive unsafe cell access */
-		unsafe { ptr!(self.inner=>exiting = true) };
+		self.exiting.set(true);
 
 		loop {
 			/* Safety: we have exclusive access until expire */
-			let timers = unsafe { &mut ptr!(self.inner=>timers) };
+			let timers = unsafe { &mut ptr!(*self.timers) };
 
 			if timers.is_empty() {
 				break;
 			}
 
-			Self::expire_first_timer(timers, Err(DriverError::Shutdown.into()));
+			#[allow(clippy::unwrap_used)]
+			let timeout = timers.pop_first().unwrap();
+
+			/* Safety: complete the future */
+			unsafe { Self::timer_complete(timeout, Err(DriverError::Shutdown.into())) };
 		}
 
 		loop {
@@ -206,27 +246,29 @@ impl Driver {
 			self.park(timeout);
 		}
 
-		/* Safety: exclusive unsafe cell access */
-		unsafe { ptr!(self.inner=>exiting = false) };
+		self.exiting.set(false);
 	}
 
 	#[inline(always)]
 	pub fn check_exiting(&self) -> Result<()> {
-		/* Safety: exclusive unsafe cell access */
-		if likely(!unsafe { ptr!(self.inner=>exiting) }) {
+		if likely(!self.exiting.get()) {
 			Ok(())
 		} else {
 			Err(DriverError::Shutdown.into())
 		}
+	}
+
+	pub fn waker(&self) -> Waker {
+		Waker::new(ptr!(self).cast(), &WAKER)
 	}
 }
 
 macro_rules! engine_task {
 	($func: ident ($($arg: ident: $type: ty),*)) => {
 		#[future]
-		pub unsafe fn $func(&self, $($arg: $type),*) -> isize {
+		pub unsafe fn $func(&self, $($arg: $type),*, request: _) -> isize {
 			#[cancel]
-			fn cancel(engine: &Engine) -> Result<()> {
+			fn cancel(engine: &Engine, request: _) -> Result<()> {
 				/* use this fn to generate the cancel closure type */
 				Ok(())
 			}
@@ -272,4 +314,11 @@ impl Driver {
 	engine_task!(statx(dirfd: RawFd, path: Ptr<()>, flags: u32, mask: u32, statx: MutPtr<Statx>));
 
 	engine_task!(poll(fd: RawFd, mask: u32));
+}
+
+impl Pin for Driver {
+	unsafe fn pin(&mut self) {
+		/* Safety: we are being pinned */
+		unsafe { self.io_engine.pin() };
+	}
 }

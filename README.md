@@ -3,6 +3,7 @@
 ![](https://github.com/davidzeng0/xx-pulse/actions/workflows/build.yml/badge.svg?event=push)
 
 `msrv: 1.79.0 stable`
+(nightly is necessary until 1.79.0 is released as stable, but no nightly features are used)
 
 Safe, performant, and ergonomic async rust runtime. <br>
 Same syntax as async rust. <br>
@@ -70,14 +71,14 @@ async fn main() {
 
 Thread local access is safe because of async/await syntax. <br>
 A compiler error prevents usage of `.await` in synchronous functions and closures. <br>
-xx-pulse uses cooperative scheduling, so it is impossble to suspend in a closure without `unsafe`. <br>
-See [using sync code as if it were async](./Motivation.md#use-sync-code-as-if-it-were-async)
+xx-pulse uses cooperative scheduling, so it is impossble to suspend in a closure without using `unsafe`. <br>
+To suspend anyway, see [using sync code as if it were async](./Motivation.md#use-sync-code-as-if-it-were-async)
 
 ```rust
 #[asynchronous]
 async fn try_use_thread_local() {
 	THREAD_LOCAL.with(|value| {
-		// OK
+		// Ok, cannot cause UB
 		use_value_synchronously(value);
 	});
 

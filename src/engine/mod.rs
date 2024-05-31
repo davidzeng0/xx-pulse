@@ -33,10 +33,20 @@ pub enum OperationKind {
 ///
 /// The result must be interpreted correctly, in order
 /// to prevent memory and/or file descriptor leaks
+///
+/// # Safety
+/// `has_work`, `work`, `prepare_wake`, and `wake` must never unwind
+///
+/// `wake` must be thread safe
 #[allow(dead_code)]
-pub trait EngineImpl {
+pub unsafe trait EngineImpl: Pin {
 	fn has_work(&self) -> bool;
+
 	fn work(&self, timeout: u64) -> Result<()>;
+
+	fn prepare_wake(&self) -> Result<()>;
+
+	fn wake(&self, request: ReqPtr<()>) -> Result<()>;
 
 	unsafe fn cancel(&self, request: ReqPtr<()>) -> Result<()>;
 
@@ -216,8 +226,11 @@ impl SyncEngine {
 	}
 }
 
+impl Pin for SyncEngine {}
+
 #[allow(unused_variables)]
-impl EngineImpl for SyncEngine {
+/* Safety: functions do not panic */
+unsafe impl EngineImpl for SyncEngine {
 	fn has_work(&self) -> bool {
 		false
 	}
@@ -225,6 +238,14 @@ impl EngineImpl for SyncEngine {
 	fn work(&self, _: u64) -> Result<()> {
 		// TODO: sleep?
 		Ok(())
+	}
+
+	fn prepare_wake(&self) -> Result<()> {
+		Err(Core::unimplemented().into())
+	}
+
+	fn wake(&self, request: ReqPtr<()>) -> Result<()> {
+		Err(Core::unimplemented().into())
 	}
 
 	unsafe fn cancel(&self, _: ReqPtr<()>) -> Result<()> {
@@ -281,32 +302,6 @@ pub struct Engine {
 	inner: IoUring
 }
 
-macro_rules! engine_task {
-	($func: ident ($($arg: ident: $type: ty),*) -> $return_type: ty) => {
-		#[future]
-		#[inline(always)]
-		pub unsafe fn $func(&self, $($arg: $type),*) -> isize {
-			#[cancel]
-			fn cancel(&self) -> Result<()> {
-				/* Safety: caller must enfore Future's contract */
-				unsafe { self.inner.cancel(request.cast()) }
-			}
-
-			/* Safety: caller must uphold Future's contract */
-			match unsafe { self.inner.$func($($arg,)* request) } {
-				None => Progress::Pending(cancel(self, request)),
-				Some(result) => Progress::Done(result),
-			}
-		}
-
-		paste! {
-			pub fn [<result_for_ $func>](val: isize) -> $return_type {
-				SyscallResult(val).into()
-			}
-		}
-	}
-}
-
 impl Engine {
 	pub fn new() -> Result<Self> {
 		#[cfg(target_os = "linux")]
@@ -323,6 +318,39 @@ impl Engine {
 	#[inline(always)]
 	pub fn work(&self, timeout: u64) -> Result<()> {
 		self.inner.work(timeout)
+	}
+
+	pub fn prepare_wake(&self) -> Result<()> {
+		self.inner.prepare_wake()
+	}
+
+	pub fn wake(&self, request: ReqPtr<()>) -> Result<()> {
+		self.inner.wake(request)
+	}
+}
+
+macro_rules! engine_task {
+	($func: ident ($($arg: ident: $type: ty),*) -> $return_type: ty) => {
+		#[future]
+		pub unsafe fn $func(&self, $($arg: $type),*, request: _) -> isize {
+			#[cancel]
+			fn cancel(&self, request: _) -> Result<()> {
+				/* Safety: caller must enfore Future's contract */
+				unsafe { self.inner.cancel(request.cast()) }
+			}
+
+			/* Safety: caller must uphold Future's contract */
+			match unsafe { self.inner.$func($($arg,)* request) } {
+				None => Progress::Pending(cancel(self, request)),
+				Some(result) => Progress::Done(result),
+			}
+		}
+
+		paste! {
+			pub fn [<result_for_ $func>](val: isize) -> $return_type {
+				SyscallResult(val).into()
+			}
+		}
 	}
 }
 
@@ -360,4 +388,11 @@ impl Engine {
 	engine_task!(statx(dirfd: RawFd, path: Ptr<()>, flags: u32, mask: u32, statx: MutPtr<Statx>) -> OsResult<()>);
 
 	engine_task!(poll(fd: RawFd, mask: u32) -> OsResult<u32>);
+}
+
+impl Pin for Engine {
+	unsafe fn pin(&mut self) {
+		/* Safety: we are being pinned */
+		unsafe { self.inner.pin() };
+	}
 }

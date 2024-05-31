@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-enumflags2 = "0.7.9"
+enumflags2 = { git = "https://github.com/davidzeng0/enumflags2.git" }
 xx-core = { git = "https://github.com/davidzeng0/xx-core.git" }
 xx-pulse-macros = { path = "macros" }
 
@@ -28,6 +28,7 @@ unused_qualifications = "warn"
 variant_size_differences = "warn"
 
 [lints.clippy]
+field_reassign_with_default = "allow"
 arithmetic_side_effects = "warn"
 cast_possible_truncation = "warn"
 cast_possible_wrap = "warn"

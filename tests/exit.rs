@@ -5,13 +5,13 @@ use std::{
 	sync::atomic::{AtomicBool, Ordering}
 };
 
-use xx_core::{async_std::sync::Notify, coroutines::take_interrupt, pointer::Pinned};
+use xx_core::{async_std::sync::RcNotify, coroutines::take_interrupt};
 use xx_pulse::*;
 
 static EXITED: AtomicBool = AtomicBool::new(false);
 
 #[asynchronous]
-async fn block2(notify: Pinned<Rc<Notify>>) {
+async fn block2(notify: RcNotify) {
 	let result = select(notify.notified(), notify.notified()).await;
 
 	result.flatten().unwrap_err();
@@ -24,7 +24,7 @@ async fn block2(notify: Pinned<Rc<Notify>>) {
 }
 
 #[asynchronous]
-async fn block(notify: Pinned<Rc<Notify>>) {
+async fn block(notify: RcNotify) {
 	for _ in 0..100 {
 		notify.notified().await.unwrap_err();
 
@@ -44,7 +44,7 @@ async fn block(notify: Pinned<Rc<Notify>>) {
 fn test_exit() {
 	#[main]
 	async fn spawn_it() {
-		let notify = Notify::<()>::new();
+		let notify = RcNotify::new();
 
 		spawn(block(notify.clone())).await;
 	}
