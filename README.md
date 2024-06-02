@@ -5,12 +5,12 @@
 `msrv: 1.79.0 stable`
 (nightly is necessary until 1.79.0 is released as stable, but no nightly features are used)
 
-Safe, performant, and ergonomic async rust runtime. <br>
-Same syntax as async rust. <br>
+Safe, [performant](./benchmarks/README.md), and efficient async rust runtime. <br>
+Same syntax as async rust and zero-cost ergonomics. <br>
 Based on stackful coroutines. <br>
 
-- [Motivation and use cases](./Motivation.md) <br>
 - [Benchmarks](./benchmarks/README.md) <br>
+- [Motivation and use cases](./Motivation.md) <br>
 - [Getting started](#getting-started)
 - [Thread local safety](#thread-local-safety)
 - [Features and development stage](#features-and-development-stage)

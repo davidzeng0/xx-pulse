@@ -1,15 +1,14 @@
 ## Why stackful?
-- [Allocation free and ergonomic async traits](#allocation-free-and-ergonomic-async-traits) <br>
+- [Zero cost async traits](#zero-cost-async-traits) <br>
 - [Use sync code as if it were async](#use-sync-code-as-if-it-were-async) <br>
 - [Async closures on stable](#async-closures-no-more-poll-functions-or-impl-future-for-myfuture) <br>
-- [Allocation free recursion](#allocation-free-and-ergonomic-async-traits) <br>
+- [Allocation free recursion](#allocation-free-recursion) <br>
 - [Performance and inlining](#performance-inlining-and-switching) <br>
 
-### Allocation free and ergonomic async traits
+### Zero cost async traits
 ```rust
 #[asynchronous]
 trait MyTrait {
-    // dynamic dispatch! no `Box::new` or any allocations
     async fn my_async_func(&mut self);
 
     // normal functions okay too
@@ -18,13 +17,14 @@ trait MyTrait {
 
 #[asynchronous]
 async fn dynamic_dispatch(value: &mut dyn MyTrait) {
+    // dynamic dispatch! no `Box::new` or any allocations
     value.my_async_func().await;
     value.my_normal_func();
 }
 
 #[asynchronous]
 async fn monomorphize(value: &mut impl MyTrait) {
-    // Can now be inlined, since there is no dynamic dispatch
+    // no dynamic dispatch. inlining is possible
     value.my_async_func().await;
 }
 ```
@@ -33,7 +33,7 @@ async fn monomorphize(value: &mut impl MyTrait) {
 
 Every async task has a execution context responsible for scheduling running operations asynchronously. <br>
 Normally, it's implicit and hidden from view of normal code, <br>
-but we can get a reference to it using [`xx_pulse::get_context`](https://github.com/davidzeng0/xx-core/blob/main/src/coroutines/mod.rs#L74), <br>
+but we can get a reference to it using [`xx_pulse::get_context`](https://github.com/davidzeng0/xx-core/blob/main/src/coroutines/mod.rs#L93), <br>
 which has the following function signature
 
 ```rust
