@@ -13,3 +13,8 @@ pub async fn timeout(expire: u64, flags: BitFlags<TimeoutFlag>) -> Result<()> {
 pub async fn sleep(duration: Duration) -> Result<()> {
 	timeout(duration.as_nanos().try_into().unwrap(), BitFlags::default()).await
 }
+
+#[asynchronous]
+pub async fn yield_now() {
+	let _ = sleep(Duration::ZERO).await;
+}
