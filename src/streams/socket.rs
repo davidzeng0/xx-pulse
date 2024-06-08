@@ -26,7 +26,7 @@ where
 		}
 	}
 
-	Err(error.unwrap_or_else(|| Core::NoAddresses.into()))
+	Err(error.unwrap_or_else(|| ErrorKind::no_addrs().into()))
 }
 
 #[asynchronous]

@@ -146,7 +146,7 @@ struct Queue {
 
 const unsafe fn get_ptr<T>(map: &Map<'_>, off: u32) -> MutPtr<T> {
 	/* Safety: guaranteed by caler */
-	unsafe { map.addr().cast::<u8>().add(off as usize).cast() }
+	unsafe { map.as_ptr().cast::<u8>().add(off as usize).cast() }
 }
 
 /// # Safety
@@ -530,13 +530,13 @@ impl IoUring {
 						continue;
 					}
 
-					break Err(Core::OutOfMemory.into());
+					break Err(ErrorKind::OutOfMemory.into());
 				}
 
 				Err(err) => {
 					break match err {
 						OsError::Time | OsError::Intr | OsError::Busy if to_submit == 0 => Ok(()),
-						OsError::Again => Err(Core::OutOfMemory.into()),
+						OsError::Again => Err(ErrorKind::OutOfMemory.into()),
 						_ => Err(err.into())
 					};
 				}
@@ -673,7 +673,7 @@ impl IoUring {
 			}
 
 			#[allow(clippy::cast_possible_truncation)]
-			let request = Ptr::from_int_addr(user_data as usize);
+			let request = Ptr::from_addr(user_data as usize);
 
 			/* Safety: complete the future */
 			unsafe { Request::complete(request, result as isize) };
@@ -720,7 +720,7 @@ impl IoUring {
 
 	#[inline(always)]
 	fn start_async(&self, mut op: SubmissionEntry, request: ReqPtr<isize>) -> Option<isize> {
-		op.user_data = request.int_addr() as u64;
+		op.user_data = request.addr() as u64;
 
 		self.push(op);
 
@@ -793,7 +793,7 @@ unsafe impl EngineImpl for IoUring {
 
 		let mut op = Op::cancel(0);
 
-		op.addr.addr = request.int_addr() as u64;
+		op.addr.addr = request.addr() as u64;
 
 		self.start_async(op, ptr!(&NO_OP));
 

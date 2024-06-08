@@ -43,14 +43,8 @@ unsafe fn wake(ptr: Ptr<()>, request: ReqPtr<()>) {
 
 static WAKER: WakerVTable = unsafe { WakerVTable::new(prepare, wake) };
 
-#[allow(clippy::module_name_repetitions, missing_copy_implementations)]
-#[errors]
-pub enum DriverError {
-	#[error("Driver is shutting down")]
-	Shutdown,
-
-	#[error("Timer not found")]
-	TimerNotFound
+fn shutdown() -> Error {
+	fmt_error!("Driver is shutting down" @ ErrorKind::Shutdown)
 }
 
 #[bitflags]
@@ -111,7 +105,7 @@ impl Driver {
 		/* Safety: we have exclusive mutable access until expire */
 		let timeout = match unsafe { ptr!(self.timers=>take(&timer)) } {
 			Some(timeout) => timeout,
-			None => return Err(DriverError::TimerNotFound.into())
+			None => return Err(fmt_error!("Timer not found" @ ErrorKind::NotFound))
 		};
 
 		#[cfg(feature = "tracing-ext")]
@@ -121,7 +115,7 @@ impl Driver {
 		unsafe {
 			Self::timer_complete(
 				timeout,
-				Err(Core::Interrupted("Timer cancelled".into()).into())
+				Err(fmt_error!("Timer cancelled" @ ErrorKind::Interrupted))
 			);
 		}
 
@@ -233,7 +227,7 @@ impl Driver {
 			let timeout = timers.pop_first().unwrap();
 
 			/* Safety: complete the future */
-			unsafe { Self::timer_complete(timeout, Err(DriverError::Shutdown.into())) };
+			unsafe { Self::timer_complete(timeout, Err(shutdown())) };
 		}
 
 		loop {
@@ -254,7 +248,7 @@ impl Driver {
 		if likely(!self.exiting.get()) {
 			Ok(())
 		} else {
-			Err(DriverError::Shutdown.into())
+			Err(shutdown())
 		}
 	}
 

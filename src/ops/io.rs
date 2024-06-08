@@ -234,7 +234,7 @@ pub mod raw {
 }
 
 fn path_to_cstr(path: impl AsRef<Path>) -> Result<CString> {
-	CString::new(path.as_ref().as_os_str().as_bytes()).map_err(|_| Core::InvalidCStr.into())
+	CString::new(path.as_ref().as_os_str().as_bytes()).map_err(|_| ErrorKind::invalid_cstr().into())
 }
 
 #[asynchronous]

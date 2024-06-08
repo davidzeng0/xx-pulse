@@ -241,11 +241,11 @@ unsafe impl EngineImpl for SyncEngine {
 	}
 
 	fn prepare_wake(&self) -> Result<()> {
-		Err(Core::unimplemented().into())
+		Err(ErrorKind::Unimplemented.into())
 	}
 
 	fn wake(&self, request: ReqPtr<()>) -> Result<()> {
-		Err(Core::unimplemented().into())
+		Err(ErrorKind::Unimplemented.into())
 	}
 
 	unsafe fn cancel(&self, _: ReqPtr<()>) -> Result<()> {

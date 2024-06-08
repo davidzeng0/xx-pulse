@@ -69,9 +69,9 @@ fn fxattr(
 	entry: &mut SubmissionEntry, fd: i32, name: Ptr<()>, value: MutPtr<()>, len: u32, flags: u32
 ) {
 	entry.fd = fd;
-	entry.addr.addr = name.int_addr() as u64;
+	entry.addr.addr = name.addr() as u64;
 	entry.len = len;
-	entry.off.addr = value.int_addr() as u64;
+	entry.off.addr = value.addr() as u64;
 	entry.rw_flags = flags;
 }
 
@@ -79,10 +79,10 @@ fn xattr(
 	entry: &mut SubmissionEntry, path: Ptr<()>, name: Ptr<()>, value: MutPtr<()>, len: u32,
 	flags: u32
 ) {
-	entry.addr3.addr = path.int_addr() as u64;
-	entry.addr.addr = name.int_addr() as u64;
+	entry.addr3.addr = path.addr() as u64;
+	entry.addr.addr = name.addr() as u64;
 	entry.len = len;
-	entry.off.addr = value.int_addr() as u64;
+	entry.off.addr = value.addr() as u64;
 	entry.rw_flags = flags;
 }
 
@@ -146,7 +146,7 @@ impl Op {
 		let mut entry = new_op(OpCode::OpenAt);
 
 		entry.fd = dfd;
-		entry.addr.addr = path.int_addr() as u64;
+		entry.addr.addr = path.addr() as u64;
 		entry.len = mode;
 		entry.rw_flags = flags;
 		entry.buf = 0;
@@ -163,9 +163,9 @@ impl Op {
 		let mut entry = new_op(OpCode::OpenAt2);
 
 		entry.fd = dfd;
-		entry.addr.addr = path.int_addr() as u64;
+		entry.addr.addr = path.addr() as u64;
 		entry.len = size_of::<OpenHow>() as u32;
-		entry.off.addr = how.int_addr() as u64;
+		entry.off.addr = how.addr() as u64;
 		entry.buf = 0;
 		entry.file.file_index = file_index;
 		entry
@@ -190,14 +190,7 @@ impl Op {
 	pub fn read(fd: i32, addr: MutPtr<()>, len: u32, off: i64, flags: u32) -> SubmissionEntry {
 		let mut entry = new_op(OpCode::Read);
 
-		rw(
-			&mut entry,
-			fd,
-			addr.int_addr() as u64,
-			len,
-			off as u64,
-			flags
-		);
+		rw(&mut entry, fd, addr.addr() as u64, len, off as u64, flags);
 
 		entry
 	}
@@ -205,14 +198,7 @@ impl Op {
 	pub fn write(fd: i32, addr: Ptr<()>, len: u32, off: i64, flags: u32) -> SubmissionEntry {
 		let mut entry = new_op(OpCode::Write);
 
-		rw(
-			&mut entry,
-			fd,
-			addr.int_addr() as u64,
-			len,
-			off as u64,
-			flags
-		);
+		rw(&mut entry, fd, addr.addr() as u64, len, off as u64, flags);
 
 		entry
 	}
@@ -225,7 +211,7 @@ impl Op {
 		rw(
 			&mut entry,
 			fd,
-			iovecs.int_addr() as u64,
+			iovecs.addr() as u64,
 			iovecs_len,
 			off as u64,
 			flags
@@ -242,7 +228,7 @@ impl Op {
 		rw(
 			&mut entry,
 			fd,
-			iovecs.int_addr() as u64,
+			iovecs.addr() as u64,
 			iovecs_len,
 			off as u64,
 			flags
@@ -259,7 +245,7 @@ impl Op {
 		rw_fixed(
 			&mut entry,
 			fd,
-			addr.int_addr() as u64,
+			addr.addr() as u64,
 			len,
 			off as u64,
 			flags,
@@ -277,7 +263,7 @@ impl Op {
 		rw_fixed(
 			&mut entry,
 			fd,
-			addr.int_addr() as u64,
+			addr.addr() as u64,
 			len,
 			off as u64,
 			flags,
@@ -301,7 +287,7 @@ impl Op {
 		rw(
 			&mut entry,
 			0,
-			ptr!(timespec).int_addr() as u64,
+			ptr!(timespec).addr() as u64,
 			1,
 			count as u64,
 			flags
@@ -339,7 +325,7 @@ impl Op {
 	pub fn madvise(addr: Ptr<()>, len: u32, flags: u32) -> SubmissionEntry {
 		let mut entry = new_op(OpCode::MemoryAdvise);
 
-		advise(&mut entry, addr.int_addr() as u64, len, 0, flags);
+		advise(&mut entry, addr.addr() as u64, len, 0, flags);
 
 		entry
 	}
@@ -352,9 +338,9 @@ impl Op {
 		fs(
 			&mut entry,
 			old_dfd,
-			old_path.int_addr() as u64,
+			old_path.addr() as u64,
 			new_dfd,
-			new_path.int_addr() as u64,
+			new_path.addr() as u64,
 			flags
 		);
 
@@ -364,7 +350,7 @@ impl Op {
 	pub fn unlinkat(dfd: i32, path: Ptr<()>, flags: u32) -> SubmissionEntry {
 		let mut entry = new_op(OpCode::UnlinkAt);
 
-		fs(&mut entry, dfd, path.int_addr() as u64, 0, 0, flags);
+		fs(&mut entry, dfd, path.addr() as u64, 0, 0, flags);
 
 		entry
 	}
@@ -372,7 +358,7 @@ impl Op {
 	pub fn mkdirat(dfd: i32, path: Ptr<()>, mode: u32) -> SubmissionEntry {
 		let mut entry = new_op(OpCode::MkdirAt);
 
-		fs(&mut entry, dfd, path.int_addr() as u64, mode as i32, 0, 0);
+		fs(&mut entry, dfd, path.addr() as u64, mode as i32, 0, 0);
 
 		entry
 	}
@@ -383,9 +369,9 @@ impl Op {
 		fs(
 			&mut entry,
 			newdirfd,
-			target.int_addr() as u64,
+			target.addr() as u64,
 			0,
-			linkpath.int_addr() as u64,
+			linkpath.addr() as u64,
 			0
 		);
 
@@ -400,9 +386,9 @@ impl Op {
 		fs(
 			&mut entry,
 			old_dfd,
-			old_path.int_addr() as u64,
+			old_path.addr() as u64,
 			new_dfd,
-			new_path.int_addr() as u64,
+			new_path.addr() as u64,
 			flags
 		);
 
@@ -479,9 +465,9 @@ impl Op {
 		rw_fixed(
 			&mut entry,
 			fd,
-			path.int_addr() as u64,
+			path.addr() as u64,
 			mask,
-			statx.int_addr() as u64,
+			statx.addr() as u64,
 			flags,
 			0
 		);
@@ -510,15 +496,7 @@ impl Op {
 	pub fn connect(fd: i32, addr: Ptr<()>, addrlen: i32) -> SubmissionEntry {
 		let mut entry = new_op(OpCode::Connect);
 
-		socket(
-			&mut entry,
-			fd,
-			addr.int_addr() as u64,
-			0,
-			addrlen as u64,
-			0,
-			0
-		);
+		socket(&mut entry, fd, addr.addr() as u64, 0, addrlen as u64, 0, 0);
 
 		entry
 	}
@@ -531,9 +509,9 @@ impl Op {
 		socket(
 			&mut entry,
 			fd,
-			addr.int_addr() as u64,
+			addr.addr() as u64,
 			0,
-			addrlen.int_addr() as u64,
+			addrlen.addr() as u64,
 			flags,
 			file_index
 		);
@@ -544,7 +522,7 @@ impl Op {
 	pub fn recv(fd: i32, buf: MutPtr<()>, len: u32, flags: u32) -> SubmissionEntry {
 		let mut entry = new_op(OpCode::Recv);
 
-		socket_rw(&mut entry, fd, buf.int_addr() as u64, len, flags);
+		socket_rw(&mut entry, fd, buf.addr() as u64, len, flags);
 
 		entry
 	}
@@ -552,7 +530,7 @@ impl Op {
 	pub fn send(fd: i32, buf: Ptr<()>, len: u32, flags: u32) -> SubmissionEntry {
 		let mut entry = new_op(OpCode::Send);
 
-		socket_rw(&mut entry, fd, buf.int_addr() as u64, len, flags);
+		socket_rw(&mut entry, fd, buf.addr() as u64, len, flags);
 
 		entry
 	}
@@ -560,7 +538,7 @@ impl Op {
 	pub fn recvmsg(fd: i32, msg: MutPtr<MsgHdr>, flags: u32) -> SubmissionEntry {
 		let mut entry = new_op(OpCode::RecvMsg);
 
-		socket_rw(&mut entry, fd, msg.int_addr() as u64, 1, flags);
+		socket_rw(&mut entry, fd, msg.addr() as u64, 1, flags);
 
 		entry
 	}
@@ -568,7 +546,7 @@ impl Op {
 	pub fn sendmsg(fd: i32, msg: Ptr<MsgHdr>, flags: u32) -> SubmissionEntry {
 		let mut entry = new_op(OpCode::SendMsg);
 
-		socket_rw(&mut entry, fd, msg.int_addr() as u64, 1, flags);
+		socket_rw(&mut entry, fd, msg.addr() as u64, 1, flags);
 
 		entry
 	}
@@ -585,7 +563,7 @@ impl Op {
 		entry.fd = fd;
 		entry.addr.addr = buf as u64;
 		entry.len = len;
-		entry.off.addr = addr.int_addr() as u64;
+		entry.off.addr = addr.addr() as u64;
 		entry.file.addr_len.len = addrlen.try_into().unwrap();
 		entry.file.addr_len.pad = [0u16; 1];
 		entry.rw_flags = flags;
@@ -628,7 +606,7 @@ impl Op {
 		entry.buf = 0;
 		entry.file.splice_fd_in = 0;
 		entry.fd = ep;
-		entry.addr.addr = event.int_addr() as u64;
+		entry.addr.addr = event.addr() as u64;
 		entry.len = op;
 		entry.off.addr = fd as u64;
 		entry
@@ -680,7 +658,7 @@ impl Op {
 	pub fn files_update(fds: MutPtr<i32>, len: u32, off: u32) -> SubmissionEntry {
 		let mut entry = new_op(OpCode::FilesUpdate);
 
-		entry.addr.addr = fds.int_addr() as u64;
+		entry.addr.addr = fds.addr() as u64;
 		entry.len = len;
 		entry.off.off = off as u64;
 		entry.rw_flags = 0;
@@ -693,7 +671,7 @@ impl Op {
 	) -> SubmissionEntry {
 		let mut entry = new_op(OpCode::ProvideBuffers);
 
-		buffer(&mut entry, addr.int_addr(), len, count, bgid, bid);
+		buffer(&mut entry, addr.addr(), len, count, bgid, bid);
 
 		entry
 	}
