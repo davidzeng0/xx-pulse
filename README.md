@@ -2,8 +2,8 @@
 
 ![](https://github.com/davidzeng0/xx-pulse/actions/workflows/build.yml/badge.svg?event=push)
 
-`msrv: 1.79.0 stable`
-(nightly is necessary until 1.79.0 is released as stable, but no nightly features are used)
+`msrv: 1.80.0 stable`
+(nightly is necessary until 1.80.0 is released as stable, but no nightly features are used)
 
 Safe, [performant](./benchmarks/README.md), and efficient async rust runtime. <br>
 Same syntax as async rust and zero-cost ergonomics. <br>
