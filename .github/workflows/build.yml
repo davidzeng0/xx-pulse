@@ -8,6 +8,7 @@ on:
 
 env:
   VALGRINDFLAGS: --show-reachable=no --show-possibly-lost=no
+  RUST_BACKTRACE: 1
 
 jobs:
   rust:
@@ -29,7 +30,7 @@ jobs:
         run: docker build -t rust .github/workflows
       - name: Finalize setup
         run: |
-          echo ARGS=\"\$@\"\; docker run --rm -e VALGRINDFLAGS=\"$VALGRINDFLAGS\" -v .:/base rust \"\$ARGS\" > ./docker_run
+          echo ARGS=\"\$@\"\; docker run --rm -e VALGRINDFLAGS=\"$VALGRINDFLAGS\" -e RUST_BACKTRACE=\"$RUST_BACKTRACE\" -v .:/base rust \"\$ARGS\" > ./docker_run
           chmod +x ./docker_run
       - name: Check & Lint
         run: ./docker_run RUSTFLAGS=\"-D warnings\" cargo +nightly clippy --all-targets
