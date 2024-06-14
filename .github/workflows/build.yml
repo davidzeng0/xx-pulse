@@ -35,11 +35,11 @@ jobs:
       - name: Check & Lint
         run: ./docker_run RUSTFLAGS=\"-D warnings\" cargo +nightly clippy --all-targets
       - name: Test debug build
-        run: ./docker_run cargo +nightly test --tests \&\& cargo +nightly valgrind test --tests
-      - name: Test release build
         run: |
           ./docker_run cargo +nightly build --test exit \&\& strace target/debug/deps/exit-93111b6c69ce210f
-          ./docker_run cargo +nightly test -r --tests \&\& cargo +nightly valgrind test -r --tests
+          ./docker_run cargo +nightly test --tests \&\& cargo +nightly valgrind test --tests
+      - name: Test release build
+        run: ./docker_run cargo +nightly test -r --tests \&\& cargo +nightly valgrind test -r --tests
       - name: Generate test coverage
         run: ./docker_run cargo +nightly llvm-cov --all-features --workspace --codecov --output-path codecov.json
       - name: Upload coverage reports to Codecov
