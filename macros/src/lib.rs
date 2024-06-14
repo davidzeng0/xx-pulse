@@ -46,7 +46,9 @@ pub fn main(_: TokenStream, item: TokenStream) -> TokenStream {
 		func.block = parse_quote! {{
 			#(#sync)*
 
-			::xx_pulse::Runtime::new().unwrap().block_on(async #block)
+			::xx_pulse::Runtime::new()
+				.expect("Failed to start runtime")
+				.block_on(async #block)
 		}};
 	}
 
