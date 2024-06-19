@@ -19,6 +19,8 @@ Based on stackful coroutines. <br>
 This library is currently only available for Linux (contributions welcome).<br>
 For Windows and Mac users, running in Docker or WSL also work. See [features and development stage](#features-and-development-stage)
 
+The [rust](https://hub.docker.com/_/rust) docker container is sufficient (needs nightly installation).
+
 ### Getting started
 
 The following is a simple echo server example
