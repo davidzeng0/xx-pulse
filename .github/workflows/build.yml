@@ -27,7 +27,7 @@ jobs:
 
           wait
 
-          cargo binstall -y cargo-valgrind cargo-llvm-cov &
+          cargo binstall -y cargo-valgrind cargo-llvm-cov
       - name: Check & Lint
         run: RUSTFLAGS="-D warnings" cargo clippy --all-targets
       - name: Test debug build
