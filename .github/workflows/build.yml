@@ -12,11 +12,6 @@ env:
 
 jobs:
   rust:
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - linux/amd64
     runs-on: ubuntu-latest
     name: Build
     steps:
@@ -24,22 +19,23 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: true
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Build image
-        run: docker build -t rust .github/workflows
-      - name: Finalize setup
+      - name: Setup
         run: |
-          echo ARGS=\"\$@\"\; docker run --rm -e VALGRINDFLAGS=\"$VALGRINDFLAGS\" -e RUST_BACKTRACE=\"$RUST_BACKTRACE\" -v .:/base rust \"\$ARGS\" > ./docker_run
-          chmod +x ./docker_run
+          sudo apt install -y valgrind &
+          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash &
+          rustup default nightly && rustup component add clippy &
+
+          wait
+
+          cargo binstall -y cargo-valgrind cargo-llvm-cov &
       - name: Check & Lint
-        run: ./docker_run RUSTFLAGS=\"-D warnings\" cargo +nightly clippy --all-targets
+        run: RUSTFLAGS="-D warnings" cargo clippy --all-targets --
       - name: Test debug build
-        run: ./docker_run cargo +nightly test --tests \&\& cargo +nightly valgrind test --tests
+        run: cargo test --tests && cargo valgrind test --tests
       - name: Test release build
-        run: ./docker_run cargo +nightly test -r --tests \&\& cargo +nightly valgrind test -r --tests
+        run: cargo test -r --tests && cargo valgrind test -r --tests
       - name: Generate test coverage
-        run: ./docker_run cargo +nightly llvm-cov --all-features --workspace --codecov --output-path codecov.json
+        run: cargo llvm-cov --all-features --codecov --output-path codecov.json --disable-default-ignore-filename-regex --ignore-filename-regex \(.cargo/registry\|rustc\)
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v4.0.1
         with:
