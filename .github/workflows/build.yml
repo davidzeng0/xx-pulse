@@ -29,13 +29,13 @@ jobs:
 
           cargo binstall -y cargo-valgrind cargo-llvm-cov &
       - name: Check & Lint
-        run: RUSTFLAGS="-D warnings" cargo clippy --all-targets --
+        run: RUSTFLAGS="-D warnings" cargo clippy --all-targets
       - name: Test debug build
         run: cargo test --tests && cargo valgrind test --tests
       - name: Test release build
         run: cargo test -r --tests && cargo valgrind test -r --tests
       - name: Generate test coverage
-        run: cargo llvm-cov --all-features --codecov --output-path codecov.json --disable-default-ignore-filename-regex --ignore-filename-regex \(.cargo/registry\|rustc\)
+        run: cargo llvm-cov --all-features --codecov --output-path codecov.json
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v4.0.1
         with:
