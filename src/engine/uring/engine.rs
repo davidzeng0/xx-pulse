@@ -142,7 +142,7 @@ struct Queue {
 }
 
 const unsafe fn get_ptr<T>(map: &Map<'_>, off: u32) -> MutPtr<T> {
-	/* Safety: guaranteed by caler */
+	/* Safety: guaranteed by caller */
 	unsafe { map.as_ptr().cast::<u8>().add(off as usize).cast() }
 }
 
