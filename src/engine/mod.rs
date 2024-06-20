@@ -2,18 +2,15 @@
 
 use std::os::fd::{IntoRawFd, OwnedFd, RawFd};
 
-use xx_core::{
-	error::*,
-	future::*,
-	os::{
-		socket::{raw::MsgHdr, *},
-		stat::Statx,
-		syscall::SyscallResult,
-		unistd::close_raw
-	},
-	paste::paste,
-	pointer::*
-};
+use xx_core::error::*;
+use xx_core::future::*;
+use xx_core::os::socket::raw::MsgHdr;
+use xx_core::os::socket::*;
+use xx_core::os::stat::Statx;
+use xx_core::os::syscall::SyscallResult;
+use xx_core::os::unistd::close_raw;
+use xx_core::paste::paste;
+use xx_core::pointer::*;
 
 mod uring;
 use uring::IoUring;

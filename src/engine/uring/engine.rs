@@ -1,23 +1,20 @@
 #![allow(clippy::multiple_unsafe_ops_per_block)]
 
-use std::{
-	collections::VecDeque,
-	os::fd::{AsFd, AsRawFd, BorrowedFd},
-	sync::{
-		atomic::{AtomicU32, Ordering},
-		Mutex
-	}
-};
+use std::collections::VecDeque;
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Mutex;
 
 use enumflags2::*;
-use xx_core::{
-	debug, error,
-	impls::Cell,
-	macros::{assert_unsafe_precondition, panic_nounwind},
-	opt::hint::*,
-	os::{error::*, eventfd::*, mman::*, openat::*, poll::PollFlag},
-	trace, warn
-};
+use xx_core::impls::Cell;
+use xx_core::macros::{assert_unsafe_precondition, panic_nounwind};
+use xx_core::opt::hint::*;
+use xx_core::os::error::*;
+use xx_core::os::eventfd::*;
+use xx_core::os::mman::*;
+use xx_core::os::openat::*;
+use xx_core::os::poll::PollFlag;
+use xx_core::{debug, error, trace, warn};
 
 use super::*;
 
@@ -434,10 +431,9 @@ pub struct IoUring {
 static NO_OP: Request<isize> = Request::no_op();
 
 impl IoUring {
-	unsafe fn process_wake(_: ReqPtr<isize>, arg: Ptr<()>, events: isize) {
-		/* Safety: ptr is valid */
-		let this = unsafe { arg.cast::<Self>().as_ref() };
-
+	#[cold]
+	#[inline(never)]
+	fn process_wake_cold(&self, events: isize) {
 		let events = Engine::result_for_poll(events)
 			.unwrap_or_else(|err| panic_nounwind!("Failed to poll event fd: {:?}", err));
 		let flags = BitFlags::from_bits_truncate(events);
@@ -446,30 +442,57 @@ impl IoUring {
 			panic_nounwind!("Error flag on event fd");
 		}
 
-		if !flags.intersects(PollFlag::In) {
-			this.poll_wake();
+		self.poll_wake();
+	}
+
+	unsafe fn process_wake(_: ReqPtr<isize>, arg: Ptr<()>, events: isize) {
+		/* Safety: ptr is valid */
+		let this = unsafe { arg.cast::<Self>().as_ref() };
+
+		if unlikely(events != PollFlag::In as isize) {
+			this.process_wake_cold(events);
 
 			return;
 		}
 
-		#[allow(clippy::unwrap_used)]
-		let mut queue = this.wake_queue.lock().unwrap();
+		let mut woken = 0;
 
-		#[allow(clippy::arithmetic_side_effects)]
-		let wakes = this.expected_wakes.update(|count| count - queue.len());
+		loop {
+			const MAX_RESUME: usize = 4;
 
-		for request in queue.drain(..) {
-			/* Safety: complete the future */
-			unsafe { Request::complete(request, ()) };
+			#[allow(clippy::unwrap_used)]
+			let mut queue = this.wake_queue.lock().unwrap();
+
+			if queue.is_empty() {
+				/* finish up reading the event fd with the lock held. resuming woken tasks
+				 * with low latency takes priority */
+				this.event_fd
+					.read()
+					.unwrap_or_else(|err| panic_nounwind!("Failed to read event fd: {:?}", err));
+				break;
+			}
+
+			let mut requests = [ReqPtr::null(); MAX_RESUME];
+			let amount = queue.len().min(MAX_RESUME);
+
+			for (out, request) in requests.iter_mut().zip(queue.drain(0..amount)) {
+				*out = request;
+			}
+
+			drop(queue);
+
+			/* we expect completing the requests to be costly, so we don't hold the lock */
+			for request in requests.iter().take(amount) {
+				/* Safety: complete the future */
+				unsafe { Request::complete(*request, ()) };
+			}
+
+			#[allow(clippy::arithmetic_side_effects)]
+			(woken += amount);
 		}
 
-		/* finish up reading the event fd with the lock held. resuming woken tasks
-		 * with low latency takes priority */
-		this.event_fd
-			.read()
-			.unwrap_or_else(|err| panic_nounwind!("Failed to read event fd: {:?}", err));
-
-		drop(queue);
+		#[allow(clippy::arithmetic_side_effects)]
+		let wakes = this.expected_wakes.update(|count| count - woken);
 
 		if wakes != 0 {
 			this.poll_wake();

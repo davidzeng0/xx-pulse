@@ -4,10 +4,10 @@
 	clippy::cast_possible_wrap
 )]
 
-use xx_core::{
-	os::{epoll::*, iovec::raw::*, openat2::OpenHow},
-	static_assertions::const_assert
-};
+use xx_core::os::epoll::*;
+use xx_core::os::iovec::raw::*;
+use xx_core::os::openat2::OpenHow;
+use xx_core::static_assertions::const_assert;
 
 use super::*;
 

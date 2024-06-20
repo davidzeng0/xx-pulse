@@ -1,19 +1,17 @@
 #![allow(unreachable_pub)]
 
-use std::{cell::Cell, collections::BTreeSet, os::fd::RawFd};
+use std::cell::Cell;
+use std::collections::BTreeSet;
+use std::os::fd::RawFd;
 
 use enumflags2::*;
-use xx_core::{
-	coroutines::{Waker, WakerVTable},
-	macros::{duration, panic_nounwind},
-	opt::hint::*,
-	os::{
-		socket::raw,
-		stat::Statx,
-		time::{self, ClockId}
-	},
-	pointer::*
-};
+use xx_core::coroutines::{Waker, WakerVTable};
+use xx_core::macros::{duration, panic_nounwind};
+use xx_core::opt::hint::*;
+use xx_core::os::socket::raw;
+use xx_core::os::stat::Statx;
+use xx_core::os::time::{self, ClockId};
+use xx_core::pointer::*;
 
 use super::*;
 

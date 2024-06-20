@@ -1,11 +1,9 @@
 use std::time::Duration;
 
 use enumflags2::BitFlags;
-use xx_core::{
-	coroutines::{self, Context, Environment, Executor, Task},
-	error::*,
-	future::{self, future, Future, Progress, ReqPtr, Request}
-};
+use xx_core::coroutines::{self, Context, Environment, Executor, Task};
+use xx_core::error::*;
+use xx_core::future::{self, future, Future, Progress, ReqPtr, Request};
 
 mod driver;
 mod engine;

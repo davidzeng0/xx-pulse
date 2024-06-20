@@ -1,9 +1,11 @@
 #![allow(clippy::unwrap_used)]
 
-use std::{io::SeekFrom, path::Path};
+use std::io::SeekFrom;
+use std::path::Path;
 
 use io::*;
-use xx_core::os::{fcntl::*, stat::*};
+use xx_core::os::fcntl::*;
+use xx_core::os::stat::*;
 
 use super::*;
 

@@ -1,6 +1,7 @@
 use proc_macro::TokenStream;
 use quote::ToTokens;
-use syn::{visit_mut::VisitMut, *};
+use syn::visit_mut::VisitMut;
+use syn::*;
 use xx_macro_support::visit_macro::*;
 
 struct HasAwait(bool);
@@ -27,6 +28,9 @@ pub fn main(_: TokenStream, item: TokenStream) -> TokenStream {
 	};
 
 	func.sig.asyncness.take();
+	func.attrs.push(parse_quote! {
+		#[::xx_pulse::asynchronous(sync)]
+	});
 
 	let pos = func.block.stmts.iter_mut().position(|stmt| {
 		let mut has_await = HasAwait(false);
@@ -38,10 +42,6 @@ pub fn main(_: TokenStream, item: TokenStream) -> TokenStream {
 	if let Some(pos) = pos {
 		let sync: Vec<_> = func.block.stmts.drain(0..pos).collect();
 		let block = &func.block;
-
-		func.attrs.push(parse_quote! {
-			#[::xx_pulse::asynchronous(sync)]
-		});
 
 		func.block = parse_quote! {{
 			#(#sync)*

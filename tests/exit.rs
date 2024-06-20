@@ -1,11 +1,10 @@
 #![allow(warnings)]
 
-use std::{
-	rc::Rc,
-	sync::atomic::{AtomicBool, Ordering}
-};
+use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use xx_core::{async_std::sync::RcNotify, coroutines::take_interrupt};
+use xx_core::async_std::sync::RcNotify;
+use xx_core::coroutines::take_interrupt;
 use xx_pulse::*;
 
 static EXITED: AtomicBool = AtomicBool::new(false);

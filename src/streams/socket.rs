@@ -2,12 +2,13 @@
 
 use std::net::{SocketAddr, ToSocketAddrs};
 
-use xx_core::{
-	async_std::io::*,
-	impls::{AsyncFn, AsyncFnOnce},
-	macros::*,
-	os::{epoll::PollFlag, error::OsError, inet::*, socket::*}
-};
+use xx_core::async_std::io::*;
+use xx_core::impls::{AsyncFn, AsyncFnOnce};
+use xx_core::macros::*;
+use xx_core::os::epoll::PollFlag;
+use xx_core::os::error::OsError;
+use xx_core::os::inet::*;
+use xx_core::os::socket::*;
 
 use super::*;
 

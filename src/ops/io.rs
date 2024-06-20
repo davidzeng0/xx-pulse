@@ -1,19 +1,18 @@
-use std::{
-	ffi::CString,
-	mem::size_of,
-	os::{
-		fd::{AsRawFd, BorrowedFd, OwnedFd, RawFd},
-		unix::prelude::OsStrExt
-	},
-	path::Path
-};
+use std::ffi::CString;
+use std::mem::size_of;
+use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd, RawFd};
+use std::os::unix::prelude::OsStrExt;
+use std::path::Path;
 
-use xx_core::{
-	error::*,
-	os::{epoll::*, fcntl::*, inet::*, openat::*, socket::*, stat::*},
-	paste::paste,
-	pointer::*
-};
+use xx_core::error::*;
+use xx_core::os::epoll::*;
+use xx_core::os::fcntl::*;
+use xx_core::os::inet::*;
+use xx_core::os::openat::*;
+use xx_core::os::socket::*;
+use xx_core::os::stat::*;
+use xx_core::paste::paste;
+use xx_core::pointer::*;
 
 use super::*;
 
@@ -25,10 +24,12 @@ pub mod raw {
 	#[cfg(feature = "tracing")]
 	#[allow(unreachable_pub)]
 	mod tracing {
-		use std::{fmt, marker::PhantomData};
+		use std::fmt;
+		use std::marker::PhantomData;
 
 		use enumflags2::*;
-		pub use xx_core::{num_traits::FromPrimitive, pointer::*};
+		pub use xx_core::num_traits::FromPrimitive;
+		pub use xx_core::pointer::*;
 
 		pub unsafe fn get_cstr_as_str<'a>(cstr: Ptr<()>) -> &'a str {
 			/* Safety: guaranteed by caller */
