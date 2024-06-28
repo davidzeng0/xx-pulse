@@ -11,8 +11,7 @@ pub use timers::*;
 pub use xx_core::coroutines::{Join, JoinHandle, Select};
 
 #[asynchronous]
-#[context('current)]
-async fn internal_get_pulse_env() -> &'current PulseContext {
+async fn internal_get_pulse_env<#[cx] 'current>() -> &'current PulseContext {
 	/* Safety: we are in an async function */
 	let env = unsafe { get_context().await }.get_environment::<PulseContext>();
 
@@ -21,8 +20,7 @@ async fn internal_get_pulse_env() -> &'current PulseContext {
 }
 
 #[asynchronous]
-#[context('current)]
-async fn internal_get_driver() -> &'current Driver {
+async fn internal_get_driver<#[cx] 'current>() -> &'current Driver {
 	let env = internal_get_pulse_env().await;
 
 	/* Safety: driver outlives context */

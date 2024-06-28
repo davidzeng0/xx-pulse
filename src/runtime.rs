@@ -171,7 +171,7 @@ impl Drop for Runtime {
 				let result = unsafe { Context::interrupt(context) };
 
 				if let Err(err) = &result {
-					debug!("Cancel was not successful: {:?}", err);
+					debug!("Cancel failed: {:?}", err);
 				}
 			}
 

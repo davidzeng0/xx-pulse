@@ -6,7 +6,8 @@ use std::os::fd::RawFd;
 
 use enumflags2::*;
 use xx_core::coroutines::{Waker, WakerVTable};
-use xx_core::macros::{duration, panic_nounwind};
+use xx_core::impls::ResultExt;
+use xx_core::macros::duration;
 use xx_core::opt::hint::*;
 use xx_core::os::socket::raw;
 use xx_core::os::stat::Statx;
@@ -21,12 +22,7 @@ unsafe fn prepare(ptr: Ptr<()>) {
 	/* Safety: ptr is valid */
 	let result = unsafe { ptr!(driver=>io_engine.prepare_wake()) };
 
-	result.unwrap_or_else(|err| {
-		panic_nounwind!(
-			"Fatal error: failed to prepare wake on I/O engine: {:?}",
-			err
-		)
-	});
+	result.expect_nounwind("Fatal error: failed to prepare wake on I/O engine");
 }
 
 unsafe fn wake(ptr: Ptr<()>, request: ReqPtr<()>) {
@@ -35,8 +31,7 @@ unsafe fn wake(ptr: Ptr<()>, request: ReqPtr<()>) {
 	/* Safety: this function call is thread safe */
 	let result = unsafe { ptr!(driver=>io_engine.wake(request)) };
 
-	result
-		.unwrap_or_else(|err| panic_nounwind!("Fatal error: failed to wake I/O engine: {:?}", err));
+	result.expect_nounwind("Fatal error: failed to wake I/O engine");
 }
 
 static WAKER: WakerVTable = unsafe { WakerVTable::new(prepare, wake) };
@@ -80,8 +75,7 @@ impl Driver {
 
 	#[inline(always)]
 	fn time_or_abort() -> u64 {
-		Self::try_time()
-			.unwrap_or_else(|err| panic_nounwind!("Failed to read the clock: {:?}", err))
+		Self::try_time().expect_nounwind("Failed to read the clock")
 	}
 
 	#[allow(clippy::expect_used)]
@@ -188,7 +182,7 @@ impl Driver {
 	fn park(&self, timeout: u64) {
 		self.io_engine
 			.work(timeout)
-			.unwrap_or_else(|err| panic_nounwind!("Fatal error from engine: {:?}", err));
+			.expect_nounwind("Fatal error from engine");
 	}
 
 	pub fn block_while<F>(&self, block: F)

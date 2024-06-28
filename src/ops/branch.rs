@@ -56,8 +56,7 @@ pub mod internal {
 	use super::*;
 
 	#[asynchronous]
-	#[context('current)]
-	pub async unsafe fn runtime() -> &'current PulseContext {
+	pub async unsafe fn runtime<#[cx] 'current>() -> &'current PulseContext {
 		internal_get_pulse_env().await
 	}
 }

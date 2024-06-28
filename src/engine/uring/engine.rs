@@ -2,11 +2,11 @@
 
 use std::collections::VecDeque;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{compiler_fence, AtomicU32, Ordering};
 use std::sync::Mutex;
 
 use enumflags2::*;
-use xx_core::impls::Cell;
+use xx_core::impls::{Cell, ResultExt};
 use xx_core::macros::{assert_unsafe_precondition, panic_nounwind};
 use xx_core::opt::hint::*;
 use xx_core::os::error::*;
@@ -262,10 +262,14 @@ impl<'mem> CompletionQueue<'mem> {
 	}
 
 	fn read_ring(&self) -> (u32, u32) {
-		(
+		let result = (
 			self.khead.load(Ordering::Relaxed),
-			self.ktail.load(Ordering::Acquire)
-		)
+			self.ktail.load(Ordering::Relaxed)
+		);
+
+		compiler_fence(Ordering::Acquire);
+
+		result
 	}
 }
 
@@ -434,8 +438,7 @@ impl IoUring {
 	#[cold]
 	#[inline(never)]
 	fn process_wake_cold(&self, events: isize) {
-		let events = Engine::result_for_poll(events)
-			.unwrap_or_else(|err| panic_nounwind!("Failed to poll event fd: {:?}", err));
+		let events = Engine::result_for_poll(events).expect_nounwind("Failed to poll event fd");
 		let flags = BitFlags::from_bits_truncate(events);
 
 		if flags.intersects(PollFlag::Error) {
@@ -468,7 +471,7 @@ impl IoUring {
 				 * with low latency takes priority */
 				this.event_fd
 					.read()
-					.unwrap_or_else(|err| panic_nounwind!("Failed to read event fd: {:?}", err));
+					.expect_nounwind("Failed to read event fd");
 				break;
 			}
 
@@ -621,7 +624,7 @@ impl IoUring {
 				None
 			)
 		})
-		.unwrap_or_else(|err| panic_nounwind!("Failed to submit timer {:?}", err));
+		.expect_nounwind("Failed to submit timer");
 
 		/* the kernel received our timeout, we can safely release `ts` */
 		Ok(())
@@ -724,7 +727,7 @@ impl IoUring {
 	#[inline(never)]
 	fn push_flush(&self) {
 		self.flush()
-			.unwrap_or_else(|err| panic_nounwind!("Failed to flush submission ring: {:?}", err));
+			.expect_nounwind("Failed to flush submission ring");
 	}
 
 	#[inline(always)]

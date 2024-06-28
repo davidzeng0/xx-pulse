@@ -2,6 +2,7 @@ use proc_macro::TokenStream;
 use quote::ToTokens;
 use syn::visit_mut::VisitMut;
 use syn::*;
+use xx_macro_support::attribute::*;
 use xx_macro_support::visit_macro::*;
 
 struct HasAwait(bool);
@@ -21,8 +22,8 @@ impl VisitMut for HasAwait {
 }
 
 #[proc_macro_attribute]
-pub fn main(_: TokenStream, item: TokenStream) -> TokenStream {
-	let mut func = match parse::<ItemFn>(item) {
+pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
+	let mut func = match ensure_empty(attr.into()).and_then(|()| parse::<ItemFn>(item)) {
 		Ok(func) => func,
 		Err(err) => return err.to_compile_error().into()
 	};
