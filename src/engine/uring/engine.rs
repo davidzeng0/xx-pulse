@@ -487,6 +487,8 @@ impl IoUring {
 
 			drop(queue);
 
+			trace!(target: this, ">> {} Wakes", amount);
+
 			/* we expect completing the requests to be costly, so we don't hold the lock */
 			for request in requests.iter().take(amount) {
 				/* Safety: complete the future */
@@ -499,6 +501,8 @@ impl IoUring {
 
 		#[allow(clippy::arithmetic_side_effects)]
 		let wakes = this.expected_wakes.update(|count| count - woken);
+
+		trace!(target: this, "== Woke up {} tasks, {} remaining", woken, wakes);
 
 		if wakes != 0 {
 			this.poll_wake();

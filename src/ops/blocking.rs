@@ -9,7 +9,8 @@ use super::*;
 #[asynchronous]
 pub async fn run_blocking<F, Output>(func: F) -> Result<Output>
 where
-	F: FnOnce(&WorkContext) -> Output + Send
+	F: FnOnce(&WorkContext) -> Output + Send,
+	Output: Send
 {
 	let driver = internal_get_driver().await;
 

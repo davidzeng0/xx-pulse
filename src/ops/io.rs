@@ -1,4 +1,5 @@
 use std::ffi::CString;
+use std::fs::{self, ReadDir};
 use std::mem::size_of;
 use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd, RawFd};
 use std::os::unix::prelude::OsStrExt;
@@ -431,4 +432,12 @@ pub async fn poll(fd: BorrowedFd<'_>, mask: BitFlags<PollFlag>) -> Result<BitFla
 	let bits = unsafe { raw::poll(fd.as_raw_fd(), mask.bits()).await? };
 
 	Ok(BitFlags::from_bits_truncate(bits))
+}
+
+#[asynchronous]
+#[allow(clippy::impl_trait_in_params)]
+pub async fn read_dir(path: impl AsRef<Path> + Send) -> Result<ReadDir> {
+	run_blocking(|_| fs::read_dir(path))
+		.await?
+		.map_err(Into::into)
 }
