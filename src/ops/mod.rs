@@ -2,10 +2,12 @@ use xx_core::pointer::*;
 
 use super::*;
 
+pub mod blocking;
 pub mod branch;
 pub mod io;
 pub mod timers;
 
+pub use blocking::*;
 pub use branch::*;
 pub use timers::*;
 pub use xx_core::coroutines::{Join, JoinHandle, Select};

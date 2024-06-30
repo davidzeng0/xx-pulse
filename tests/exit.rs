@@ -11,13 +11,13 @@ static EXITED: AtomicBool = AtomicBool::new(false);
 
 #[asynchronous]
 async fn block2(notify: RcNotify) {
-	let result = select(notify.notified(), notify.notified()).await;
+	let result = select(notify.wait(), notify.wait()).await;
 
 	result.flatten().unwrap_err();
 
 	take_interrupt().await;
 
-	let result = join(notify.notified(), notify.notified()).await;
+	let result = join(notify.wait(), notify.wait()).await;
 
 	result.flatten().unwrap_err();
 }
@@ -25,7 +25,7 @@ async fn block2(notify: RcNotify) {
 #[asynchronous]
 async fn block(notify: RcNotify) {
 	for _ in 0..100 {
-		notify.notified().await.unwrap_err();
+		notify.wait().await.unwrap_err();
 
 		take_interrupt().await;
 

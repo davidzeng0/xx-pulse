@@ -13,6 +13,7 @@ use xx_core::os::socket::raw;
 use xx_core::os::stat::Statx;
 use xx_core::os::time::{self, ClockId};
 use xx_core::pointer::*;
+use xx_core::threadpool::*;
 
 use super::*;
 
@@ -300,6 +301,21 @@ impl Driver {
 	engine_task!(statx(dirfd: RawFd, path: Ptr<()>, flags: u32, mask: u32, statx: MutPtr<Statx>));
 
 	engine_task!(poll(fd: RawFd, mask: u32));
+
+	#[future]
+	pub unsafe fn run_work(&self, work: MutPtr<Work<'_>>, request: _) -> bool {
+		#[cancel]
+		fn cancel(engine: &Engine, cancel: CancelWork, request: _) -> Result<()> {
+			/* use this fn to generate the cancel closure type */
+			Ok(())
+		}
+
+		#[allow(clippy::multiple_unsafe_ops_per_block)]
+		/* Safety: guaranteed by caller */
+		unsafe {
+			self.io_engine.run_work(work).run(request)
+		}
+	}
 }
 
 impl Pin for Driver {

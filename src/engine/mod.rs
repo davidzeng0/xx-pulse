@@ -11,6 +11,7 @@ use xx_core::os::syscall::SyscallResult;
 use xx_core::os::unistd::close_raw;
 use xx_core::paste::paste;
 use xx_core::pointer::*;
+use xx_core::threadpool::*;
 
 mod uring;
 use uring::IoUring;
@@ -44,6 +45,10 @@ pub unsafe trait EngineImpl: Pin {
 	fn prepare_wake(&self) -> Result<()>;
 
 	fn wake(&self, request: ReqPtr<()>) -> Result<()>;
+
+	unsafe fn start_work(&self, work: MutPtr<Work<'_>>, request: ReqPtr<bool>) -> CancelWork;
+
+	unsafe fn cancel_work(&self, cancel: CancelWork);
 
 	unsafe fn cancel(&self, request: ReqPtr<()>) -> Result<()>;
 
@@ -245,6 +250,14 @@ unsafe impl EngineImpl for SyncEngine {
 		Err(ErrorKind::Unimplemented.into())
 	}
 
+	unsafe fn start_work(&self, work: MutPtr<Work<'_>>, request: ReqPtr<bool>) -> CancelWork {
+		unimplemented!();
+	}
+
+	unsafe fn cancel_work(&self, cancel: CancelWork) {
+		unimplemented!();
+	}
+
 	unsafe fn cancel(&self, _: ReqPtr<()>) -> Result<()> {
 		/* nothing to cancel */
 		Ok(())
@@ -385,6 +398,22 @@ impl Engine {
 	engine_task!(statx(dirfd: RawFd, path: Ptr<()>, flags: u32, mask: u32, statx: MutPtr<Statx>) -> OsResult<()>);
 
 	engine_task!(poll(fd: RawFd, mask: u32) -> OsResult<u32>);
+
+	#[future]
+	pub unsafe fn run_work(&self, work: MutPtr<Work<'_>>, request: _) -> bool {
+		#[cancel]
+		fn cancel(&self, cancel: CancelWork, request: _) -> Result<()> {
+			/* Safety: caller must uphold Future's contract */
+			unsafe { self.inner.cancel_work(cancel) };
+
+			Ok(())
+		}
+
+		/* Safety: guaranteed by caller */
+		let token = unsafe { self.inner.start_work(work, request) };
+
+		Progress::Pending(cancel(self, token, request))
+	}
 }
 
 impl Pin for Engine {

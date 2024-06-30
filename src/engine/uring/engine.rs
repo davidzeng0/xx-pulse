@@ -14,6 +14,7 @@ use xx_core::os::eventfd::*;
 use xx_core::os::mman::*;
 use xx_core::os::openat::*;
 use xx_core::os::poll::PollFlag;
+use xx_core::threadpool::*;
 use xx_core::{debug, error, trace, warn};
 
 use super::*;
@@ -429,7 +430,9 @@ pub struct IoUring {
 	wake_queue: Mutex<VecDeque<ReqPtr<()>>>,
 
 	event_fd: EventFd,
-	event_request: Request<isize>
+	event_request: Request<isize>,
+
+	thread_pool: ThreadPool
 }
 
 static NO_OP: Request<isize> = Request::no_op();
@@ -503,6 +506,7 @@ impl IoUring {
 	}
 
 	pub fn new() -> Result<Self> {
+		let thread_pool = ThreadPool::new_with_default_count()?;
 		let (features, ring_fd, params) = create_io_uring()?;
 		let rings = Rings::new(ring_fd.as_fd(), &params)?;
 
@@ -522,7 +526,9 @@ impl IoUring {
 
 			event_fd: EventFd::new(CreateFlag::NonBlock.into())?,
 			/* Safety: events does not unwind */
-			event_request: unsafe { Request::new(Ptr::null(), Self::process_wake) }
+			event_request: unsafe { Request::new(Ptr::null(), Self::process_wake) },
+
+			thread_pool
 		})
 	}
 
@@ -811,6 +817,16 @@ unsafe impl EngineImpl for IoUring {
 		}
 
 		Ok(())
+	}
+
+	unsafe fn start_work(&self, work: MutPtr<Work<'_>>, request: ReqPtr<bool>) -> CancelWork {
+		/* Safety: guaranteed by caller */
+		unsafe { self.thread_pool.submit_direct(work, request) }
+	}
+
+	unsafe fn cancel_work(&self, cancel: CancelWork) {
+		/* Safety: guaranteed by caller */
+		unsafe { self.thread_pool.cancel_direct(cancel) }
 	}
 
 	unsafe fn cancel(&self, request: ReqPtr<()>) -> Result<()> {
