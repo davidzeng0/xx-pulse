@@ -33,11 +33,11 @@ async fn monomorphize(value: &mut impl MyTrait) {
 
 Every async task has a execution context responsible for scheduling running operations asynchronously. <br>
 Normally, it's implicit and hidden from view of normal code, <br>
-but we can get a reference to it using [`xx_pulse::get_context`](https://github.com/davidzeng0/xx-core/blob/main/src/coroutines/mod.rs#L91), <br>
+but we can get a reference to it using [`xx_pulse::get_context`](https://github.com/davidzeng0/xx-core/blob/main/src/coroutines/mod.rs#L100), <br>
 which has the following function signature
 
 ```rust
-pub async unsafe fn get_context() -> &'current Context {
+pub async fn get_context() -> &'current Context {
 	/* compiler builtin */
 }
 ```
@@ -93,8 +93,8 @@ impl std::io::Read for Adapter<'_> {
 
 #[asynchronous]
 async fn do_async_read(buf: &mut [u8]) -> std::io::Result<usize> {
-    // the magic words
-    let async_context = unsafe { get_context().await };
+    // store the context for use later
+    let async_context = get_context().await;
     let mut reader = Adapter { async_context };
 
     // do the sync read without blocking the thread

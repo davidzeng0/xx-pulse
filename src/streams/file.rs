@@ -127,10 +127,9 @@ impl Seek for File {
 	async fn stream_len(&mut self) -> Result<u64> {
 		let mut stat = Statx::default();
 
-		statx(
-			Some(self.fd.as_fd()),
-			"",
-			AtFlag::EmptyPath.into(),
+		io::statx_fd(
+			self.fd.as_fd(),
+			BitFlags::default(),
 			BitFlags::default(),
 			&mut stat
 		)

@@ -7,6 +7,7 @@ use xx_core::future::{self, future, Future, Progress, ReqPtr, Request};
 
 mod driver;
 mod engine;
+pub mod fs;
 pub mod impls;
 pub mod interval;
 pub mod macros;

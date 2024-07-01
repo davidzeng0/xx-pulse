@@ -74,8 +74,7 @@ impl PulseWorker {
 	#[asynchronous]
 	pub async unsafe fn new() -> Self {
 		Self {
-			/* Safety: we are in an async function */
-			context: unsafe { get_context().await }.into(),
+			context: get_context().await.into(),
 			node: Node::new()
 		}
 	}

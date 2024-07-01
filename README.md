@@ -16,7 +16,10 @@ Based on stackful coroutines. <br>
 - [Features and development stage](#features-and-development-stage)
 
 ### Note:
-This library is currently only available for Linux (contributions welcome).<br>
+
+This library is not ready for production use. Many semantics and APIs are still under development.
+
+This library is currently only available for Linux (other OS's contributions are welcome).<br>
 For Windows and Mac users, running in Docker or WSL also work. See [features and development stage](#features-and-development-stage)
 
 The [rust](https://hub.docker.com/_/rust) docker container is sufficient (needs nightly installation).
@@ -43,7 +46,9 @@ async fn main() {
     let listener = Tcp::bind("127.0.0.1:8080").await.unwrap();
 
     // Can also timeout operations after 5s
-    let listener: Option<Result<TcpListener, _>> = Tcp::bind("...").timeout(xx_core::duration!(5 s)).await;
+    let listener: Option<Result<TcpListener, _>> = Tcp::bind("...")
+        .timeout(xx_core::duration!(5 s))
+        .await;
 
     loop {
         let (mut client, _) = listener.accept().await.unwrap();
@@ -110,4 +115,4 @@ Current and planned features:
 - [x] use sync code in an async manner, without rewriting existing sync code
 - [ ] multithreading (in progress)
 - [ ] async drop (compiler support is ideal)
-- [ ] io_uring goodies (fixed file, buffer select, async drop support is ideal to implement ergonomically)
+- [ ] io_uring goodies (fixed file, buffer select)

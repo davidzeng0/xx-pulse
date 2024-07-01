@@ -14,8 +14,7 @@ pub use xx_core::coroutines::{Join, JoinHandle, Select};
 
 #[asynchronous]
 async fn internal_get_pulse_env<#[cx] 'current>() -> &'current PulseContext {
-	/* Safety: we are in an async function */
-	let env = unsafe { get_context().await }.get_environment::<PulseContext>();
+	let env = get_context().await.get_environment::<PulseContext>();
 
 	#[allow(clippy::expect_used)]
 	env.expect("Cannot use xx-pulse functions with a different runtime")

@@ -1,11 +1,11 @@
-use std::ffi::CString;
-use std::fs::{self, ReadDir};
+use std::ffi::CStr;
 use std::mem::size_of;
 use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd, RawFd};
-use std::os::unix::prelude::OsStrExt;
 use std::path::Path;
 
 use xx_core::error::*;
+use xx_core::impls::AsyncFnOnce;
+use xx_core::os;
 use xx_core::os::epoll::*;
 use xx_core::os::fcntl::*;
 use xx_core::os::inet::*;
@@ -235,28 +235,38 @@ pub mod raw {
 	});
 }
 
-fn path_to_cstr(path: impl AsRef<Path>) -> Result<CString> {
-	CString::new(path.as_ref().as_os_str().as_bytes()).map_err(|_| ErrorKind::invalid_cstr().into())
+#[asynchronous]
+async fn with_path_as_cstr<F, Output>(path: impl AsRef<Path>, func: F) -> Result<Output>
+where
+	F: for<'a> AsyncFnOnce<&'a CStr, Output = Result<Output>>
+{
+	let context = get_context().await;
+
+	/* Safety: we are in an async function */
+	os::with_path_as_cstr(path, |path| unsafe {
+		scoped(context, func.call_once(path))
+	})
 }
 
 #[asynchronous]
 #[allow(clippy::impl_trait_in_params)]
 pub async fn open(path: impl AsRef<Path>, flags: BitFlags<OpenFlag>, mode: u32) -> Result<OwnedFd> {
-	let path = path_to_cstr(path)?;
-
-	/* Safety: lifetimes captured by this function are valid until it returns */
-	unsafe { raw::open(ptr!(path.as_ptr()).cast(), flags.bits(), mode).await }
+	with_path_as_cstr(path, |path: &CStr| async move {
+		/* Safety: all references must be valid for this function call */
+		unsafe { raw::open(ptr!(path.as_ptr()).cast(), flags.bits(), mode).await }
+	})
+	.await
 }
 
 #[asynchronous]
 pub async fn close(fd: OwnedFd) -> Result<()> {
-	/* Safety: lifetimes captured by this function are valid until it returns */
+	/* Safety: all references must be valid for this function call */
 	unsafe { raw::close(fd.as_raw_fd()).await }
 }
 
 #[asynchronous]
 pub async fn read(fd: BorrowedFd<'_>, buf: &mut [u8], offset: i64) -> Result<usize> {
-	/* Safety: lifetimes captured by this function are valid until it returns */
+	/* Safety: all references must be valid for this function call */
 	unsafe {
 		raw::read(
 			fd.as_raw_fd(),
@@ -270,7 +280,7 @@ pub async fn read(fd: BorrowedFd<'_>, buf: &mut [u8], offset: i64) -> Result<usi
 
 #[asynchronous]
 pub async fn write(fd: BorrowedFd<'_>, buf: &[u8], offset: i64) -> Result<usize> {
-	/* Safety: lifetimes captured by this function are valid until it returns */
+	/* Safety: all references must be valid for this function call */
 	unsafe { raw::write(fd.as_raw_fd(), ptr!(buf.as_ptr()).cast(), buf.len(), offset).await }
 }
 
@@ -278,7 +288,7 @@ pub async fn write(fd: BorrowedFd<'_>, buf: &[u8], offset: i64) -> Result<usize>
 pub async fn socket(
 	domain: AddressFamily, socket_type: u32, protocol: IpProtocol
 ) -> Result<OwnedFd> {
-	/* Safety: lifetimes captured by this function are valid until it returns */
+	/* Safety: all references must be valid for this function call */
 	unsafe { raw::socket(domain as u32, socket_type, protocol as u32).await }
 }
 
@@ -287,7 +297,7 @@ pub async fn accept<A>(socket: BorrowedFd<'_>, addr: &mut A) -> Result<(OwnedFd,
 	#[allow(clippy::unwrap_used)]
 	let mut addrlen = size_of::<A>().try_into().unwrap();
 
-	/* Safety: lifetimes captured by this function are valid until it returns */
+	/* Safety: all references must be valid for this function call */
 	let fd =
 		unsafe { raw::accept(socket.as_raw_fd(), ptr!(addr).cast(), ptr!(&mut addrlen)).await? };
 
@@ -296,7 +306,7 @@ pub async fn accept<A>(socket: BorrowedFd<'_>, addr: &mut A) -> Result<(OwnedFd,
 
 #[asynchronous]
 pub async fn connect<A>(socket: BorrowedFd<'_>, addr: &A) -> Result<()> {
-	/* Safety: lifetimes captured by this function are valid until it returns */
+	/* Safety: all references must be valid for this function call */
 	#[allow(clippy::unwrap_used)]
 	unsafe {
 		raw::connect(
@@ -320,7 +330,7 @@ pub async fn connect_addr(socket: BorrowedFd<'_>, addr: &Address) -> Result<()> 
 pub async fn recv(
 	socket: BorrowedFd<'_>, buf: &mut [u8], flags: BitFlags<MessageFlag>
 ) -> Result<usize> {
-	/* Safety: lifetimes captured by this function are valid until it returns */
+	/* Safety: all references must be valid for this function call */
 	unsafe {
 		raw::recv(
 			socket.as_raw_fd(),
@@ -336,7 +346,7 @@ pub async fn recv(
 pub async fn recvmsg(
 	socket: BorrowedFd<'_>, header: &mut MsgHdrMut<'_>, flags: BitFlags<MessageFlag>
 ) -> Result<usize> {
-	/* Safety: lifetimes captured by this function are valid until it returns */
+	/* Safety: all references must be valid for this function call */
 	unsafe { raw::recvmsg(socket.as_raw_fd(), ptr!(header).cast(), flags.bits()).await }
 }
 
@@ -344,7 +354,7 @@ pub async fn recvmsg(
 pub async fn send(
 	socket: BorrowedFd<'_>, buf: &[u8], flags: BitFlags<MessageFlag>
 ) -> Result<usize> {
-	/* Safety: lifetimes captured by this function are valid until it returns */
+	/* Safety: all references must be valid for this function call */
 	unsafe {
 		raw::send(
 			socket.as_raw_fd(),
@@ -360,19 +370,19 @@ pub async fn send(
 pub async fn sendmsg(
 	socket: BorrowedFd<'_>, header: &MsgHdr<'_>, flags: BitFlags<MessageFlag>
 ) -> Result<usize> {
-	/* Safety: lifetimes captured by this function are valid until it returns */
+	/* Safety: all references must be valid for this function call */
 	unsafe { raw::sendmsg(socket.as_raw_fd(), ptr!(header).cast(), flags.bits()).await }
 }
 
 #[asynchronous]
 pub async fn shutdown(socket: BorrowedFd<'_>, how: Shutdown) -> Result<()> {
-	/* Safety: lifetimes captured by this function are valid until it returns */
+	/* Safety: all references must be valid for this function call */
 	unsafe { raw::shutdown(socket.as_raw_fd(), how as u32).await }
 }
 
 #[asynchronous]
 pub async fn bind<A>(socket: BorrowedFd<'_>, addr: &A) -> Result<()> {
-	/* Safety: lifetimes captured by this function are valid until it returns */
+	/* Safety: all references must be valid for this function call */
 	#[allow(clippy::unwrap_used)]
 	unsafe {
 		raw::bind(
@@ -394,13 +404,13 @@ pub async fn bind_addr(socket: BorrowedFd<'_>, addr: &Address) -> Result<()> {
 
 #[asynchronous]
 pub async fn listen(socket: BorrowedFd<'_>, backlog: i32) -> Result<()> {
-	/* Safety: lifetimes captured by this function are valid until it returns */
+	/* Safety: all references must be valid for this function call */
 	unsafe { raw::listen(socket.as_raw_fd(), backlog).await }
 }
 
 #[asynchronous]
 pub async fn fsync(file: BorrowedFd<'_>) -> Result<()> {
-	/* Safety: lifetimes captured by this function are valid until it returns */
+	/* Safety: all references must be valid for this function call */
 	unsafe { raw::fsync(file.as_raw_fd()).await }
 }
 
@@ -410,14 +420,38 @@ pub async fn statx(
 	dirfd: Option<BorrowedFd<'_>>, path: impl AsRef<Path>, flags: BitFlags<AtFlag>,
 	mask: BitFlags<StatxMask>, statx: &mut Statx
 ) -> Result<()> {
-	let dirfd = dirfd.map_or(OpenAt::CurrentWorkingDirectory as i32, |fd| fd.as_raw_fd());
-	let path = path_to_cstr(path)?;
+	let dirfd = into_raw_dirfd(dirfd);
 
-	/* Safety: lifetimes captured by this function are valid until it returns */
+	with_path_as_cstr(path, |path: &CStr| async move {
+		/* Safety: all references must be valid for this function call */
+		unsafe {
+			raw::statx(
+				dirfd,
+				ptr!(path.as_ptr()).cast(),
+				flags.bits(),
+				mask.bits(),
+				statx.into()
+			)
+			.await
+		}
+	})
+	.await
+}
+
+#[asynchronous]
+#[allow(clippy::impl_trait_in_params)]
+pub async fn statx_fd(
+	fd: BorrowedFd<'_>, mut flags: BitFlags<AtFlag>, mask: BitFlags<StatxMask>, statx: &mut Statx
+) -> Result<()> {
+	const EMPTY_PATH: &CStr = c"";
+
+	flags |= AtFlag::EmptyPath;
+
+	/* Safety: all references must be valid for this function call */
 	unsafe {
 		raw::statx(
-			dirfd,
-			ptr!(path.as_ptr()).cast(),
+			fd.as_raw_fd(),
+			ptr!(EMPTY_PATH.as_ptr()).cast(),
 			flags.bits(),
 			mask.bits(),
 			statx.into()
@@ -428,16 +462,8 @@ pub async fn statx(
 
 #[asynchronous]
 pub async fn poll(fd: BorrowedFd<'_>, mask: BitFlags<PollFlag>) -> Result<BitFlags<PollFlag>> {
-	/* Safety: lifetimes captured by this function are valid until it returns */
+	/* Safety: all references must be valid for this function call */
 	let bits = unsafe { raw::poll(fd.as_raw_fd(), mask.bits()).await? };
 
 	Ok(BitFlags::from_bits_truncate(bits))
-}
-
-#[asynchronous]
-#[allow(clippy::impl_trait_in_params)]
-pub async fn read_dir(path: impl AsRef<Path> + Send) -> Result<ReadDir> {
-	run_blocking(|_| fs::read_dir(path))
-		.await?
-		.map_err(Into::into)
 }
