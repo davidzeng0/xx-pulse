@@ -7,7 +7,7 @@ on:
     branches: [ "main" ]
 
 env:
-  VALGRINDFLAGS: --show-reachable=no --show-possibly-lost=no
+  VALGRINDFLAGS: --show-reachable=no --show-possibly-lost=no --fair-sched=yes
   RUST_BACKTRACE: 1
 
 jobs:
