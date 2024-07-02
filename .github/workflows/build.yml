@@ -21,7 +21,15 @@ jobs:
           submodules: true
       - name: Setup
         run: |
-          sudo apt install -y valgrind &
+          curl -L --proto '=https' --tlsv1.2 -sSf -O https://sourceware.org/pub/valgrind/valgrind-3.23.0.tar.bz2
+
+          tar -xf valgrind-3.23.0.tar.bz2
+          rm valgrind-3.23.0.tar.bz2
+          cd valgrind-3.23.0
+          ./configure
+          sudo make install -j $(nproc) &
+          sudo apt install -y libc6-dbg &
+
           curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash &
           rustup default nightly && rustup component add clippy &
 
