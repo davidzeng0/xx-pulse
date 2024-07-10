@@ -79,11 +79,6 @@ impl Driver {
 		Self::try_time().expect_nounwind("Failed to read the clock")
 	}
 
-	#[allow(clippy::expect_used)]
-	pub fn time() -> u64 {
-		Self::try_time().expect("Failed to read the clock")
-	}
-
 	unsafe fn timer_complete(timeout: Timeout, result: Result<()>) {
 		/* Safety: guaranteed by caller */
 		unsafe { Request::complete(timeout.request, result) };
@@ -128,7 +123,7 @@ impl Driver {
 
 		#[allow(clippy::expect_used)]
 		if !flags.intersects(TimeoutFlag::Abs) {
-			expire = expire.checked_add(Self::time()).expect("Timeout overflow");
+			expire = expire.checked_add(nanotime()).expect("Timeout overflow");
 		}
 
 		#[cfg(feature = "tracing-ext")]

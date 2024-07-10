@@ -201,7 +201,7 @@ pub mod raw {
 	});
 
 	async_engine_task!(false, shutdown(socket: RawFd, how: u32) -> Result<()> {
-		trace("## shutdown(fd = {}, how = {:?}) = {:?}", socket, Shutdown::from_u32(how)) = result
+		trace("## shutdown(fd = {}, how = {}) = {:?}", socket, EnumDisplay::<Shutdown>::new(how)) = result
 	});
 
 	async_engine_task!(false, bind(socket: RawFd, addr: Ptr<()>, addrlen: i32) -> Result<()> {

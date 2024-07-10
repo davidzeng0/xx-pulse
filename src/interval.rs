@@ -43,13 +43,13 @@ impl Interval {
 			return Ok(());
 		}
 
-		let now = Driver::time();
+		let now = nanotime();
 
 		if self.expire == 0 {
 			self.expire = now;
 		}
 
-		#[allow(clippy::unwrap_used)]
+		#[allow(clippy::unwrap_used, clippy::arithmetic_side_effects)]
 		match self.missed_tick_behavior {
 			MissedTickBehavior::Burst => self.expire = self.expire.checked_add(self.delay).unwrap(),
 			MissedTickBehavior::Delay => self.expire = now.checked_add(self.delay).unwrap(),
@@ -60,11 +60,9 @@ impl Interval {
 					next = now.checked_add(self.delay).unwrap();
 
 					/* subsequent iteration, align to next delay boundary */
-					#[allow(clippy::arithmetic_side_effects)]
 					let align = (now - self.expire) % self.delay;
 
-					#[allow(clippy::arithmetic_side_effects)]
-					(next -= align);
+					next -= align;
 				}
 
 				self.expire = next;

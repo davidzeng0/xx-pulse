@@ -643,7 +643,7 @@ impl IoUring {
 	fn submit_and_wait(&self, timeout: u64) -> Result<(u32, u32)> {
 		let wait = timeout != 0;
 
-		if unlikely(self.to_submit.get() == 0) {
+		if unlikely(self.to_submit == 0) {
 			let ring = self.queue.completion.read_ring();
 
 			if ring.0 != ring.1 {
@@ -747,7 +747,7 @@ impl IoUring {
 		#[allow(clippy::arithmetic_side_effects)]
 		self.to_submit.update(|count| count + 1);
 
-		if likely(self.to_submit.get() < self.queue.submission.capacity) {
+		if likely(self.to_submit < self.queue.submission.capacity) {
 			return;
 		}
 
@@ -786,7 +786,7 @@ impl Pin for IoUring {
 /* Safety: functions don't panic */
 unsafe impl EngineImpl for IoUring {
 	fn has_work(&self) -> bool {
-		self.to_complete.get() != 0 || self.to_submit.get() != 0
+		self.to_complete != 0 || self.to_submit != 0
 	}
 
 	#[inline]

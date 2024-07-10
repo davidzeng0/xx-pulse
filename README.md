@@ -39,36 +39,41 @@ cargo add --git https://github.com/davidzeng0/xx-pulse.git xx-pulse
 
 In file `main.rs`
 ```rust
-use xx_pulse::Tcp;
+use xx_pulse::{Tcp, TcpListener};
+use xx_pulse::impls::TaskExtensionsExt;
+use xx_core::error::{Error, Result};
+use xx_core::macros::duration;
 
 #[xx_pulse::main]
-async fn main() {
-    let listener = Tcp::bind("127.0.0.1:8080").await.unwrap();
+async fn main() -> Result<()> {
+    let listener = Tcp::bind("127.0.0.1:8080").await?;
 
     // Can also timeout operations after 5s
-    let listener: Option<Result<TcpListener, _>> = Tcp::bind("...")
-        .timeout(xx_core::duration!(5 s))
+    let listener2: Option<Result<TcpListener>> = Tcp::bind("...")
+        .timeout(duration!(5 s))
         .await;
 
     loop {
-        let (mut client, _) = listener.accept().await.unwrap();
+        let (mut client, _) = listener.accept().await?;
 
         xx_pulse::spawn(async move {
             let mut buf = [0; 1024];
 
             loop {
-                let n = client.recv(&mut buf, Default::default()).await.unwrap();
+                let n = client.recv(&mut buf, Default::default()).await?;
 
                 if n == 0 {
                     break;
                 }
 
-                let n = client.send(&buf, Default::default()).await.unwrap();
+                let n = client.send(&buf, Default::default()).await?;
 
                 if n == 0 {
                     break;
                 }
             }
+
+            Ok::<_, Error>(())
         }).await;
     }
 }

@@ -1,5 +1,6 @@
 use std::ffi::OsStr;
-use std::os::fd::{AsFd, OwnedFd};
+use std::fmt;
+use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -63,6 +64,24 @@ impl DirEntry {
 	}
 }
 
+impl fmt::Debug for DirEntry {
+	fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+		let mut this = fmt.debug_struct("DirEntry");
+
+		this.field("path", &self.path());
+		this.field("inode", &self.ent.ino);
+		this.field("offset", &self.ent.off);
+
+		if let Some(ty) = self.ent.file_type() {
+			this.field("type", &ty);
+		} else {
+			this.field("type", &self.ent.ty);
+		}
+
+		this.finish()
+	}
+}
+
 pub struct ReadDir {
 	dir: Arc<Dir>,
 	entries: DirEnts
@@ -73,7 +92,14 @@ impl ReadDir {
 	async fn next(&mut self) -> Result<Option<DirEntry>> {
 		while !self.entries.is_eof() {
 			if !self.entries.has_next_cached() {
-				run_blocking(|_| self.entries.read_from_fd(self.dir.fd.as_fd())).await??;
+				run_blocking(|state| loop {
+					let result = self.entries.read_from_fd(self.dir.fd.as_fd());
+
+					if !matches!(result, Err(OsError::Intr)) || state.cancelled() {
+						break result;
+					}
+				})
+				.await??;
 
 				continue;
 			}
@@ -104,6 +130,15 @@ impl ReadDir {
 		}
 
 		Ok(None)
+	}
+}
+
+impl fmt::Debug for ReadDir {
+	fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+		fmt.debug_struct("ReadDir")
+			.field("fd", &self.dir.fd.as_raw_fd())
+			.field("path", &self.dir.path)
+			.finish()
 	}
 }
 

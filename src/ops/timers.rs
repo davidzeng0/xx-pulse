@@ -1,3 +1,5 @@
+use xx_core::os::time::{self, ClockId};
+
 use super::*;
 
 #[asynchronous]
@@ -17,4 +19,10 @@ pub async fn sleep(duration: Duration) -> Result<()> {
 #[asynchronous]
 pub async fn yield_now() {
 	let _ = sleep(Duration::ZERO).await;
+}
+
+#[allow(clippy::missing_panics_doc, clippy::expect_used)]
+#[must_use]
+pub fn nanotime() -> u64 {
+	time::nanotime(ClockId::Monotonic).expect("Failed to read the clock")
 }
