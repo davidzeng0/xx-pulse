@@ -1,3 +1,5 @@
+#![allow(clippy::wildcard_imports)]
+
 use proc_macro::TokenStream;
 use quote::ToTokens;
 use syn::visit_mut::VisitMut;
@@ -9,6 +11,8 @@ struct HasAwait(bool);
 
 impl VisitMut for HasAwait {
 	fn visit_item_mut(&mut self, _: &mut Item) {}
+
+	fn visit_expr_async_mut(&mut self, _: &mut ExprAsync) {}
 
 	fn visit_expr_closure_mut(&mut self, _: &mut ExprClosure) {}
 

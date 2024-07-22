@@ -46,16 +46,24 @@ pub unsafe trait EngineImpl: Pin {
 
 	fn wake(&self, request: ReqPtr<()>) -> Result<()>;
 
+	/// # Safety
+	/// See [`ThreadPool::submit_direct`]
 	unsafe fn start_work(&self, work: MutPtr<Work<'_>>, request: ReqPtr<bool>) -> CancelWork;
 
+	/// # Safety
+	/// See [`ThreadPool::cancel_direct`]
 	unsafe fn cancel_work(&self, cancel: CancelWork);
 
+	/// # Safety
+	/// See [`Cancel::run`]
 	unsafe fn cancel(&self, request: ReqPtr<()>) -> Result<()>;
 
 	fn open_kind(&self) -> OperationKind {
 		OperationKind::SyncOffload
 	}
 
+	/// # Safety
+	/// See [`Future::run`]
 	unsafe fn open(
 		&self, _path: Ptr<()>, _flags: u32, _mode: u32, _request: ReqPtr<isize>
 	) -> Option<isize> {
@@ -66,6 +74,8 @@ pub unsafe trait EngineImpl: Pin {
 		OperationKind::SyncOffload
 	}
 
+	/// # Safety
+	/// See [`Future::run`]
 	unsafe fn close(&self, _fd: RawFd, _request: ReqPtr<isize>) -> Option<isize> {
 		unimplemented!();
 	}
@@ -74,6 +84,8 @@ pub unsafe trait EngineImpl: Pin {
 		OperationKind::SyncOffload
 	}
 
+	/// # Safety
+	/// See [`Future::run`]
 	unsafe fn read(
 		&self, _fd: RawFd, _buf: MutPtr<()>, _len: usize, _offset: i64, _request: ReqPtr<isize>
 	) -> Option<isize> {
@@ -84,6 +96,8 @@ pub unsafe trait EngineImpl: Pin {
 		OperationKind::SyncOffload
 	}
 
+	/// # Safety
+	/// See [`Future::run`]
 	unsafe fn write(
 		&self, _fd: RawFd, _buf: Ptr<()>, _len: usize, _offset: i64, _request: ReqPtr<isize>
 	) -> Option<isize> {
@@ -94,6 +108,8 @@ pub unsafe trait EngineImpl: Pin {
 		OperationKind::NonBlocking
 	}
 
+	/// # Safety
+	/// See [`Future::run`]
 	unsafe fn socket(
 		&self, _domain: u32, _socket_type: u32, _protocol: u32, _request: ReqPtr<isize>
 	) -> Option<isize> {
@@ -104,6 +120,8 @@ pub unsafe trait EngineImpl: Pin {
 		OperationKind::SyncOffload
 	}
 
+	/// # Safety
+	/// See [`Future::run`]
 	unsafe fn accept(
 		&self, _socket: RawFd, _addr: MutPtr<()>, _addrlen: MutPtr<i32>, _request: ReqPtr<isize>
 	) -> Option<isize> {
@@ -114,6 +132,8 @@ pub unsafe trait EngineImpl: Pin {
 		OperationKind::SyncOffload
 	}
 
+	/// # Safety
+	/// See [`Future::run`]
 	unsafe fn connect(
 		&self, _socket: RawFd, _addr: Ptr<()>, _addrlen: i32, _request: ReqPtr<isize>
 	) -> Option<isize> {
@@ -124,6 +144,8 @@ pub unsafe trait EngineImpl: Pin {
 		OperationKind::SyncOffload
 	}
 
+	/// # Safety
+	/// See [`Future::run`]
 	unsafe fn recv(
 		&self, _socket: RawFd, _buf: MutPtr<()>, _len: usize, _flags: u32, _request: ReqPtr<isize>
 	) -> Option<isize> {
@@ -134,6 +156,8 @@ pub unsafe trait EngineImpl: Pin {
 		OperationKind::SyncOffload
 	}
 
+	/// # Safety
+	/// See [`Future::run`]
 	unsafe fn recvmsg(
 		&self, _socket: RawFd, _header: MutPtr<MsgHdr>, _flags: u32, _request: ReqPtr<isize>
 	) -> Option<isize> {
@@ -144,6 +168,8 @@ pub unsafe trait EngineImpl: Pin {
 		OperationKind::SyncOffload
 	}
 
+	/// # Safety
+	/// See [`Future::run`]
 	unsafe fn send(
 		&self, _socket: RawFd, _buf: Ptr<()>, _len: usize, _flags: u32, _request: ReqPtr<isize>
 	) -> Option<isize> {
@@ -154,6 +180,8 @@ pub unsafe trait EngineImpl: Pin {
 		OperationKind::SyncOffload
 	}
 
+	/// # Safety
+	/// See [`Future::run`]
 	unsafe fn sendmsg(
 		&self, _socket: RawFd, _header: Ptr<MsgHdr>, _flags: u32, _request: ReqPtr<isize>
 	) -> Option<isize> {
@@ -164,6 +192,8 @@ pub unsafe trait EngineImpl: Pin {
 		OperationKind::SyncOffload
 	}
 
+	/// # Safety
+	/// See [`Future::run`]
 	unsafe fn shutdown(&self, _socket: RawFd, _how: u32, _request: ReqPtr<isize>) -> Option<isize> {
 		unimplemented!();
 	}
@@ -172,6 +202,8 @@ pub unsafe trait EngineImpl: Pin {
 		OperationKind::NonBlocking
 	}
 
+	/// # Safety
+	/// See [`Future::run`]
 	unsafe fn bind(
 		&self, _socket: RawFd, _addr: Ptr<()>, _addrlen: i32, _request: ReqPtr<isize>
 	) -> Option<isize> {
@@ -182,6 +214,8 @@ pub unsafe trait EngineImpl: Pin {
 		OperationKind::NonBlocking
 	}
 
+	/// # Safety
+	/// See [`Future::run`]
 	unsafe fn listen(
 		&self, _socket: RawFd, _backlog: i32, _request: ReqPtr<isize>
 	) -> Option<isize> {
@@ -192,6 +226,8 @@ pub unsafe trait EngineImpl: Pin {
 		OperationKind::SyncOffload
 	}
 
+	/// # Safety
+	/// See [`Future::run`]
 	unsafe fn fsync(&self, _file: RawFd, _request: ReqPtr<isize>) -> Option<isize> {
 		unimplemented!();
 	}
@@ -200,6 +236,8 @@ pub unsafe trait EngineImpl: Pin {
 		OperationKind::SyncOffload
 	}
 
+	/// # Safety
+	/// See [`Future::run`]
 	unsafe fn statx(
 		&self, _dirfd: RawFd, _path: Ptr<()>, _flags: u32, _mask: u32, _statx: MutPtr<Statx>,
 		_request: ReqPtr<isize>
@@ -211,6 +249,8 @@ pub unsafe trait EngineImpl: Pin {
 		OperationKind::SyncOffload
 	}
 
+	/// # Safety
+	/// See [`Future::run`]
 	unsafe fn poll(&self, _fd: RawFd, _mask: u32, _request: ReqPtr<isize>) -> Option<isize> {
 		unimplemented!();
 	}
@@ -341,6 +381,8 @@ impl Engine {
 
 macro_rules! engine_task {
 	($func: ident ($($arg: ident: $type: ty),*) -> $return_type: ty) => {
+		/// # Safety
+		/// See [`Future::run`]
 		#[future]
 		pub unsafe fn $func(&self, $($arg: $type),*, request: _) -> isize {
 			#[cancel]

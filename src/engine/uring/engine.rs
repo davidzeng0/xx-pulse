@@ -5,8 +5,9 @@ use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
 use std::sync::atomic::{compiler_fence, AtomicU32, Ordering};
 use std::sync::Mutex;
 
-use enumflags2::*;
-use xx_core::impls::{Cell, ResultExt};
+use enumflags2::{make_bitflags, BitFlags};
+use xx_core::cell::Cell;
+use xx_core::impls::ResultExt;
 use xx_core::macros::{assert_unsafe_precondition, panic_nounwind};
 use xx_core::opt::hint::*;
 use xx_core::os::error::*;
@@ -142,6 +143,8 @@ struct Queue {
 	completion: CompletionQueue<'static>
 }
 
+/// # Safety
+/// valid offset
 const unsafe fn get_ptr<T>(map: &Map<'_>, off: u32) -> MutPtr<T> {
 	/* Safety: guaranteed by caller */
 	unsafe { map.as_ptr().cast::<u8>().add(off as usize).cast() }
@@ -154,6 +157,8 @@ unsafe fn get_ref<'mem, T>(map: &Map<'mem>, off: u32) -> &'mem T {
 	unsafe { get_ptr::<T>(map, off).as_ref() }
 }
 
+/// # Safety
+/// valid offset and len
 unsafe fn get_array<T>(map: &Map<'_>, off: u32, len: u32) -> MutPtr<[T]> {
 	/* Safety: guaranteed by caller */
 	let base = unsafe { get_ptr::<T>(map, off) };
@@ -451,6 +456,9 @@ impl IoUring {
 		self.poll_wake();
 	}
 
+	/// # Safety
+	/// valid ptr
+	#[allow(clippy::missing_panics_doc)]
 	unsafe fn process_wake(_: ReqPtr<isize>, arg: Ptr<()>, events: isize) {
 		/* Safety: ptr is valid */
 		let this = unsafe { arg.cast::<Self>().as_ref() };
@@ -502,7 +510,7 @@ impl IoUring {
 		#[allow(clippy::arithmetic_side_effects)]
 		let wakes = this.expected_wakes.update(|count| count - woken);
 
-		trace!(target: this, "== Woke up {} tasks, {} remaining", woken, wakes);
+		trace!(target: this, "== Woke up {} tasks, {} more expected", woken, wakes);
 
 		if wakes != 0 {
 			this.poll_wake();
@@ -595,8 +603,9 @@ impl IoUring {
 	}
 
 	/// Compatibility function for kernels without `ExtArg`
-	#[inline(never)]
 	#[cold]
+	#[inline(never)]
+	#[allow(clippy::missing_panics_doc)]
 	fn submit_and_wait_compat(&self, mut timeout: u64) -> Result<()> {
 		let tail = self.queue.completion.read_ring().1;
 

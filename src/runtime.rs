@@ -5,7 +5,6 @@ use std::cell::Cell;
 use xx_core::container::zero_alloc::linked_list::*;
 use xx_core::debug;
 use xx_core::fiber::*;
-use xx_core::macros::container_of;
 use xx_core::pointer::*;
 use xx_core::runtime::join;
 
@@ -144,8 +143,9 @@ impl Drop for Runtime {
 		 */
 		loop {
 			/* to prevent busy looping, move all our nodes to a new list */
-			let mut list = LinkedList::new();
-			let list = list.pin_local();
+			let list = LinkedList::new();
+
+			pin!(list);
 
 			/* Safety: our new list is pinned, and we clear out all nodes before
 			 * returning

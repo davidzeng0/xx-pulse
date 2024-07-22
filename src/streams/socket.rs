@@ -4,12 +4,13 @@ use std::net::{SocketAddr, ToSocketAddrs};
 use std::os::fd::AsRawFd;
 
 use xx_core::async_std::io::*;
-use xx_core::impls::{AsyncFn, AsyncFnOnce};
+use xx_core::coroutines::ops::{AsyncFn, AsyncFnOnce};
 use xx_core::macros::*;
 use xx_core::os::epoll::PollFlag;
 use xx_core::os::error::OsError;
 use xx_core::os::inet::*;
 use xx_core::os::socket::*;
+use xx_core::pointer::*;
 use xx_core::trace;
 
 use super::*;
@@ -18,7 +19,7 @@ use super::*;
 async fn foreach_addr<A, F, Output>(addrs: A, f: F) -> Result<Output>
 where
 	A: ToSocketAddrs,
-	F: AsyncFn<Address, Output = Result<Output>>
+	F: AsyncFn(Address) -> Result<Output>
 {
 	let mut error = None;
 
@@ -63,7 +64,7 @@ where
 	.await
 }
 
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::missing_panics_doc)]
 fn convert_addr(storage: AddressStorage) -> SocketAddr {
 	/* into should be ok here unless OS is broken */
 	storage.try_into().unwrap()
@@ -76,9 +77,11 @@ async fn with_budget<T, U, Sync, Suspend>(
 ) -> Result<U>
 where
 	Sync: FnOnce(BorrowedFd<'_>, &mut T) -> OsResult<U>,
-	Suspend: for<'a, 'b> AsyncFnOnce<(BorrowedFd<'a>, &'b mut T), Output = Result<U>>
+	Suspend: AsyncFnOnce(BorrowedFd<'_>, &mut T) -> Result<U>
 {
 	if ready.contains(flags) && acquire_budget(None).await {
+		check_interrupt().await?;
+
 		match sync(fd, &mut data) {
 			Ok(result) => return Ok(result),
 			Err(OsError::WouldBlock) => ready.remove(flags),
@@ -486,22 +489,27 @@ impl Socket {
 		io::connect_addr(self.fd(), addr).await
 	}
 
+	#[allow(clippy::unused_async)]
 	pub async fn set_recvbuf_size(&self, size: i32) -> Result<()> {
 		set_recvbuf_size(self.fd(), size).map_err(Into::into)
 	}
 
+	#[allow(clippy::unused_async)]
 	pub async fn set_sendbuf_size(&self, size: i32) -> Result<()> {
 		set_sendbuf_size(self.fd(), size).map_err(Into::into)
 	}
 
+	#[allow(clippy::unused_async)]
 	pub async fn set_tcp_nodelay(&self, enable: bool) -> Result<()> {
 		set_tcp_nodelay(self.fd(), enable).map_err(Into::into)
 	}
 
+	#[allow(clippy::unused_async)]
 	pub async fn set_tcp_keepalive(&self, enable: bool, idle: i32) -> Result<()> {
 		set_tcp_keepalive(self.fd(), enable, idle).map_err(Into::into)
 	}
 
+	#[allow(clippy::unused_async)]
 	pub async fn local_addr(&self) -> Result<SocketAddr> {
 		let mut addr = AddressStorage::default();
 
@@ -510,6 +518,7 @@ impl Socket {
 		Ok(convert_addr(addr))
 	}
 
+	#[allow(clippy::unused_async)]
 	pub async fn peer_addr(&self) -> Result<SocketAddr> {
 		let mut addr = AddressStorage::default();
 

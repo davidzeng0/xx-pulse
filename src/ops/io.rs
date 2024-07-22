@@ -3,8 +3,8 @@ use std::mem::size_of;
 use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd, RawFd};
 use std::path::Path;
 
+use xx_core::coroutines::ops::AsyncFnOnce;
 use xx_core::error::*;
-use xx_core::impls::AsyncFnOnce;
 use xx_core::os;
 use xx_core::os::epoll::*;
 use xx_core::os::fcntl::*;
@@ -28,10 +28,12 @@ pub mod raw {
 		use std::fmt;
 		use std::marker::PhantomData;
 
-		use enumflags2::*;
+		use enumflags2::{BitFlag, BitFlags};
 		pub use xx_core::num_traits::FromPrimitive;
 		pub use xx_core::pointer::*;
 
+		/// # Safety
+		/// valid cstr
 		pub unsafe fn get_cstr_as_str<'a>(cstr: Ptr<()>) -> &'a str {
 			/* Safety: guaranteed by caller */
 			let cstr = unsafe { std::ffi::CStr::from_ptr(cstr.as_ptr().cast()) };
@@ -94,7 +96,7 @@ pub mod raw {
 	}
 
 	#[cfg(feature = "tracing")]
-	use tracing::*;
+	use self::tracing::*;
 
 	macro_rules! async_engine_task {
 		($force: literal, $func: ident ($($arg: ident: $type: ty),*) -> $return_type: ty {
@@ -238,7 +240,7 @@ pub mod raw {
 #[asynchronous]
 async fn with_path_as_cstr<F, Output>(path: impl AsRef<Path>, func: F) -> Result<Output>
 where
-	F: for<'a> AsyncFnOnce<&'a CStr, Output = Result<Output>>
+	F: AsyncFnOnce(&CStr) -> Result<Output>
 {
 	let context = get_context().await;
 

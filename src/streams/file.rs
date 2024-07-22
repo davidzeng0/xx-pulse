@@ -3,10 +3,10 @@
 use std::io::SeekFrom;
 use std::path::Path;
 
-use io::*;
 use xx_core::os::fcntl::*;
 use xx_core::os::stat::*;
 
+use super::io::*;
 use super::*;
 
 pub struct File {

@@ -16,15 +16,16 @@ mod runtime;
 pub mod streams;
 
 pub use driver::TimeoutFlag;
-use driver::*;
-use engine::*;
 pub use interval::*;
 pub use macros::*;
 pub use ops::*;
 pub use runtime::Runtime;
-use runtime::*;
 pub use streams::*;
 pub use xx_core::coroutines::{
 	acquire_budget, asynchronous, block_on, check_interrupt, check_interrupt_take, current_budget,
 	get_context, interrupt_guard, is_interrupted, scoped, take_interrupt
 };
+
+use self::driver::*;
+use self::engine::*;
+use self::runtime::*;

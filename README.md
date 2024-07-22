@@ -3,7 +3,6 @@
 ![](https://github.com/davidzeng0/xx-pulse/actions/workflows/build.yml/badge.svg?event=push)
 
 `msrv: 1.80.0 stable`
-(nightly is necessary until 1.80.0 is released as stable, but no nightly features are used)
 
 Safe, [performant](./benchmarks/README.md), and efficient async rust runtime. <br>
 Same syntax as async rust and zero-cost ergonomics. <br>
@@ -22,7 +21,7 @@ This library is not ready for production use. Many semantics and APIs are still 
 This library is currently only available for Linux (other OS's contributions are welcome).<br>
 For Windows and Mac users, running in Docker or WSL also work. See [features and development stage](#features-and-development-stage)
 
-The [rust](https://hub.docker.com/_/rust) docker container is sufficient (needs nightly installation).
+The [rust](https://hub.docker.com/_/rust) docker container is sufficient.
 
 ### Getting started
 
@@ -40,7 +39,7 @@ cargo add --git https://github.com/davidzeng0/xx-pulse.git xx-pulse
 In file `main.rs`
 ```rust
 use xx_pulse::{Tcp, TcpListener};
-use xx_pulse::impls::TaskExtensionsExt;
+use xx_pulse::impls::TaskExt;
 use xx_core::error::{Error, Result};
 use xx_core::macros::duration;
 

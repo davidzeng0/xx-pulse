@@ -555,6 +555,8 @@ impl Op {
 		Self::sendto_zc(fd, buf, len, flags, Ptr::null(), 0, buf_index)
 	}
 
+	/// # Panics
+	/// if `addrlen` is larger than `u16::MAX`
 	pub fn sendto_zc(
 		fd: i32, buf: usize, len: u32, flags: u32, addr: Ptr<()>, addrlen: u32, buf_index: u16
 	) -> SubmissionEntry {

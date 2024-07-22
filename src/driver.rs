@@ -1,10 +1,10 @@
 #![allow(unreachable_pub)]
 
-use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::os::fd::RawFd;
 
-use enumflags2::*;
+use enumflags2::{bitflags, BitFlags};
+use xx_core::cell::*;
 use xx_core::coroutines::{Waker, WakerVTable};
 use xx_core::impls::ResultExt;
 use xx_core::macros::duration;
@@ -17,6 +17,8 @@ use xx_core::threadpool::*;
 
 use super::*;
 
+/// # Safety
+/// valid pointer
 unsafe fn prepare(ptr: Ptr<()>) {
 	let driver = ptr.cast::<Driver>();
 
@@ -26,6 +28,10 @@ unsafe fn prepare(ptr: Ptr<()>) {
 	result.expect_nounwind("Fatal error: failed to prepare wake on I/O engine");
 }
 
+/// # Safety
+/// valid pointer
+///
+/// See [`Request::complete`]
 unsafe fn wake(ptr: Ptr<()>, request: ReqPtr<()>) {
 	let driver = ptr.cast::<Driver>();
 
@@ -70,15 +76,12 @@ impl Driver {
 	}
 
 	#[inline(always)]
-	fn try_time() -> Result<u64> {
-		time::nanotime(ClockId::Monotonic)
+	fn time() -> u64 {
+		time::nanotime(ClockId::Monotonic).expect_nounwind("Failed to read the clock")
 	}
 
-	#[inline(always)]
-	fn time_or_abort() -> u64 {
-		Self::try_time().expect_nounwind("Failed to read the clock")
-	}
-
+	/// # Safety
+	/// See [`Request::complete`]
 	unsafe fn timer_complete(timeout: Timeout, result: Result<()>) {
 		/* Safety: guaranteed by caller */
 		unsafe { Request::complete(timeout.request, result) };
@@ -96,7 +99,6 @@ impl Driver {
 			None => return Err(fmt_error!("Timer not found" @ ErrorKind::NotFound))
 		};
 
-		#[cfg(feature = "tracing-ext")]
 		xx_core::trace!(target: self, "## cancel_timer(request = {:?}) = Ok(reason = cancel)", timeout.request);
 
 		/* Safety: complete the future */
@@ -126,7 +128,6 @@ impl Driver {
 			expire = expire.checked_add(nanotime()).expect("Timeout overflow");
 		}
 
-		#[cfg(feature = "tracing-ext")]
 		xx_core::trace!(target: self, "## timeout(expire = {}, request = {:?}) = Ok(())", expire, request);
 
 		self.queue_timer(Timeout { expire, request });
@@ -135,11 +136,12 @@ impl Driver {
 	}
 
 	#[inline(always)]
+	#[allow(clippy::missing_panics_doc)]
 	fn run_timers(&self) -> u64 {
 		#[allow(clippy::cast_possible_truncation)]
-		let mut timeout = duration!(1 h).as_nanos() as u64;
+		let mut timeout = duration!(1 hour).as_nanos() as u64;
+		let mut now = Self::time();
 		let mut ran = false;
-		let mut now = Self::time_or_abort();
 
 		loop {
 			/* Safety: we have mutable access until expire */
@@ -151,7 +153,7 @@ impl Driver {
 
 			if timer.expire > now {
 				if ran {
-					now = Self::time_or_abort();
+					now = Self::time();
 				}
 
 				timeout = timer.expire.saturating_sub(now);
@@ -161,7 +163,6 @@ impl Driver {
 
 			ran = true;
 
-			#[cfg(feature = "tracing-ext")]
 			xx_core::trace!(target: self, "## run_timers: complete(request = {:?}, reason = timeout)", timer.request);
 
 			#[allow(clippy::unwrap_used)]
@@ -200,6 +201,7 @@ impl Driver {
 		}
 	}
 
+	#[allow(clippy::missing_panics_doc)]
 	pub fn exit(&self) {
 		self.exiting.set(true);
 
@@ -247,6 +249,8 @@ impl Driver {
 
 macro_rules! engine_task {
 	($func: ident ($($arg: ident: $type: ty),*)) => {
+		/// # Safety
+		/// See [`Future::run`]
 		#[future]
 		pub unsafe fn $func(&self, $($arg: $type),*, request: _) -> isize {
 			#[cancel]
