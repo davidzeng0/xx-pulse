@@ -1,5 +1,3 @@
-#![allow(clippy::wildcard_imports)]
-
 use proc_macro::TokenStream;
 use quote::ToTokens;
 use syn::visit_mut::VisitMut;

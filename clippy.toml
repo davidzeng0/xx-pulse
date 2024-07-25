@@ -8,5 +8,6 @@ allowed-wildcard-imports = [
 	"xx_pulse",
 	"xx_url",
 	"xx_mpeg",
+	"syn",
 ]
 check-private-items = true

@@ -33,7 +33,7 @@ async fn monomorphize(value: &mut impl MyTrait) {
 
 Every async task has a execution context responsible for scheduling running operations asynchronously. <br>
 Normally, it's implicit and hidden from view of normal code, <br>
-but we can get a reference to it using [`xx_pulse::get_context`](https://github.com/davidzeng0/xx-core/blob/main/src/coroutines/mod.rs#L62), <br>
+but we can get a reference to it using [`xx_pulse::get_context`](https://github.com/davidzeng0/xx-core/blob/main/src/coroutines/mod.rs#L57), <br>
 which has the following function signature
 
 ```rust

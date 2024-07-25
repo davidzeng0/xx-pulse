@@ -4,7 +4,7 @@ use std::net::{SocketAddr, ToSocketAddrs};
 use std::os::fd::AsRawFd;
 
 use xx_core::async_std::io::*;
-use xx_core::coroutines::ops::{AsyncFn, AsyncFnOnce};
+use xx_core::coroutines::ops::{AsyncFn, AsyncFnExt, AsyncFnOnce};
 use xx_core::macros::*;
 use xx_core::os::epoll::PollFlag;
 use xx_core::os::error::OsError;
@@ -30,7 +30,7 @@ where
 		}
 	}
 
-	Err(error.unwrap_or_else(|| ErrorKind::no_addrs().into()))
+	Err(error.unwrap_or_else(|| common::NO_ADDRESSES.into()))
 }
 
 #[asynchronous]
