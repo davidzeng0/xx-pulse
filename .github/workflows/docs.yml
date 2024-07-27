@@ -1,0 +1,41 @@
+name: Docs
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: Build docs
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Configure pages
+        uses: actions/configure-pages@v4
+      - name: Build docs
+        run: |
+          rustup update
+          cargo doc -p xx-pulse -p xx-core -p xx-macro-support -p xx-macros --no-deps --all-features
+          echo '<meta http-equiv="refresh" content="0; url=xx_pulse">' > target/doc/index.html
+          rm target/doc/.lock
+      - name: Upload pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/doc
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy
+    needs: build
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
