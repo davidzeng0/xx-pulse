@@ -43,7 +43,7 @@ jobs:
       - name: Test release build
         run: cargo test -r --tests && cargo valgrind test -r --tests
       - name: Generate test coverage
-        run: cargo llvm-cov --all-features --codecov --output-path codecov.json
+        run: cargo llvm-cov --codecov --output-path codecov.json
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v4.0.1
         with:
