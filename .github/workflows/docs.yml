@@ -18,7 +18,7 @@ jobs:
       - name: Build docs
         run: |
           rustup update
-          cargo doc -p xx-pulse -p xx-core -p xx-macro-support -p xx-macros --no-deps --all-features
+          cargo doc -F xx-doc
           echo '<meta http-equiv="refresh" content="0; url=xx_pulse">' > target/doc/index.html
           rm target/doc/.lock
       - name: Upload pages
