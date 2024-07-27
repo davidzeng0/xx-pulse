@@ -1,9 +1,5 @@
-use proc_macro::TokenStream;
-use quote::ToTokens;
 use syn::visit_mut::VisitMut;
-use syn::*;
-use xx_macro_support::attribute::*;
-use xx_macro_support::visit_macro::*;
+use xx_macro_support::*;
 
 struct HasAwait(bool);
 
@@ -23,37 +19,37 @@ impl VisitMut for HasAwait {
 	}
 }
 
-#[proc_macro_attribute]
-pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
-	let mut func = match ensure_empty(attr.into()).and_then(|()| parse::<ItemFn>(item)) {
-		Ok(func) => func,
-		Err(err) => return err.to_compile_error().into()
-	};
+declare_attribute_macro! {
+	pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
+		let mut func = parse2::<ItemFn>(item)?;
 
-	func.sig.asyncness.take();
-	func.attrs.push(parse_quote! {
-		#[::xx_pulse::asynchronous(sync)]
-	});
+		attr.require_empty()?;
 
-	let pos = func.block.stmts.iter_mut().position(|stmt| {
-		let mut has_await = HasAwait(false);
+		func.sig.asyncness.take();
+		func.attrs.push(parse_quote! {
+			#[::xx_pulse::asynchronous(sync)]
+		});
 
-		has_await.visit_stmt_mut(stmt);
-		has_await.0
-	});
+		let pos = func.block.stmts.iter_mut().position(|stmt| {
+			let mut has_await = HasAwait(false);
 
-	if let Some(pos) = pos {
-		let sync: Vec<_> = func.block.stmts.drain(0..pos).collect();
-		let block = &func.block;
+			has_await.visit_stmt_mut(stmt);
+			has_await.0
+		});
 
-		func.block = parse_quote! {{
-			#(#sync)*
+		if let Some(pos) = pos {
+			let sync: Vec<_> = func.block.stmts.drain(0..pos).collect();
+			let block = &func.block;
 
-			::xx_pulse::Runtime::new()
-				.expect("Failed to start runtime")
-				.block_on(async #block)
-		}};
+			func.block = parse_quote! {{
+				#(#sync)*
+
+				::xx_pulse::Runtime::new()
+					.expect("Failed to start runtime")
+					.block_on(async #block)
+			}};
+		}
+
+		Ok(func.to_token_stream())
 	}
-
-	func.to_token_stream().into()
 }

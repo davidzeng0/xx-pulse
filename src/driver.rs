@@ -115,7 +115,7 @@ impl Driver {
 	#[future]
 	pub fn timeout(&self, mut expire: u64, flags: BitFlags<TimeoutFlag>, request: _) -> Result<()> {
 		#[cancel]
-		fn cancel(&self, expire: u64, request: _) -> Result<()> {
+		fn cancel(&self, expire: u64) -> Result<()> {
 			self.cancel_timer(Timeout { expire, request })
 		}
 
@@ -132,7 +132,7 @@ impl Driver {
 
 		self.queue_timer(Timeout { expire, request });
 
-		Progress::Pending(cancel(self, expire, request))
+		Progress::Pending(cancel(self, expire))
 	}
 
 	#[inline(always)]
@@ -254,7 +254,7 @@ macro_rules! engine_task {
 		#[future]
 		pub unsafe fn $func(&self, $($arg: $type),*, request: _) -> isize {
 			#[cancel]
-			fn cancel(engine: &Engine, request: _) -> Result<()> {
+			fn cancel(engine: &Engine) -> Result<()> {
 				/* use this fn to generate the cancel closure type */
 				Ok(())
 			}
@@ -304,7 +304,7 @@ impl Driver {
 	#[future]
 	pub unsafe fn run_work(&self, work: MutPtr<Work<'_>>, request: _) -> bool {
 		#[cancel]
-		fn cancel(engine: &Engine, cancel: CancelWork, request: _) -> Result<()> {
+		fn cancel(engine: &Engine, cancel: CancelWork) -> Result<()> {
 			/* use this fn to generate the cancel closure type */
 			Ok(())
 		}

@@ -4,12 +4,12 @@ use std::os::fd::{IntoRawFd, OwnedFd, RawFd};
 
 use xx_core::error::*;
 use xx_core::future::*;
+use xx_core::macros::paste;
 use xx_core::os::socket::raw::MsgHdr;
 use xx_core::os::socket::*;
 use xx_core::os::stat::Statx;
 use xx_core::os::syscall::SyscallResult;
 use xx_core::os::unistd::close_raw;
-use xx_core::paste::paste;
 use xx_core::pointer::*;
 use xx_core::threadpool::*;
 
@@ -386,14 +386,14 @@ macro_rules! engine_task {
 		#[future]
 		pub unsafe fn $func(&self, $($arg: $type),*, request: _) -> isize {
 			#[cancel]
-			fn cancel(&self, request: _) -> Result<()> {
+			fn cancel(&self) -> Result<()> {
 				/* Safety: caller must enfore Future's contract */
 				unsafe { self.inner.cancel(request.cast()) }
 			}
 
 			/* Safety: caller must uphold Future's contract */
 			match unsafe { self.inner.$func($($arg,)* request) } {
-				None => Progress::Pending(cancel(self, request)),
+				None => Progress::Pending(cancel(self)),
 				Some(result) => Progress::Done(result),
 			}
 		}
@@ -444,7 +444,7 @@ impl Engine {
 	#[future]
 	pub unsafe fn run_work(&self, work: MutPtr<Work<'_>>, request: _) -> bool {
 		#[cancel]
-		fn cancel(&self, cancel: CancelWork, request: _) -> Result<()> {
+		fn cancel(&self, cancel: CancelWork) -> Result<()> {
 			/* Safety: caller must uphold Future's contract */
 			unsafe { self.inner.cancel_work(cancel) };
 
@@ -454,7 +454,7 @@ impl Engine {
 		/* Safety: guaranteed by caller */
 		let token = unsafe { self.inner.start_work(work, request) };
 
-		Progress::Pending(cancel(self, token, request))
+		Progress::Pending(cancel(self, token))
 	}
 }
 

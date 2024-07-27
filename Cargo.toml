@@ -11,6 +11,7 @@ xx-pulse-macros = { path = "macros" }
 [features]
 tracing = []
 tracing-ext = ["tracing"]
+xx-doc = ["xx-core/xx-doc"]
 
 [lints.rust]
 elided_lifetimes_in_paths = "warn"

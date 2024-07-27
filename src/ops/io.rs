@@ -5,6 +5,7 @@ use std::path::Path;
 
 use xx_core::coroutines::ops::AsyncFnOnce;
 use xx_core::error::*;
+use xx_core::macros::paste;
 use xx_core::os;
 use xx_core::os::epoll::*;
 use xx_core::os::fcntl::*;
@@ -12,7 +13,6 @@ use xx_core::os::inet::*;
 use xx_core::os::openat::*;
 use xx_core::os::socket::*;
 use xx_core::os::stat::*;
-use xx_core::paste::paste;
 use xx_core::pointer::*;
 
 use super::*;
