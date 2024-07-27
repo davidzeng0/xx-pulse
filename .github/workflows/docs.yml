@@ -15,10 +15,14 @@ jobs:
           submodules: true
       - name: Configure pages
         uses: actions/configure-pages@v4
+      - name: Setup
+        run: rustup update
       - name: Build docs
         run: |
-          rustup update
-          cargo doc -F xx-doc
+          cargo doc --no-deps --features xx-doc \
+            --package log --package enumflags2 --package num-traits \
+            --package xx-macro-support --package xx-macros --package xx-core \
+            --package xx-pulse
           echo '<meta http-equiv="refresh" content="0; url=xx_pulse">' > target/doc/index.html
           rm target/doc/.lock
       - name: Upload pages
