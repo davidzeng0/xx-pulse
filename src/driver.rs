@@ -135,7 +135,6 @@ impl Driver {
 		Progress::Pending(cancel(self, expire))
 	}
 
-	#[inline(always)]
 	#[allow(clippy::missing_panics_doc)]
 	fn run_timers(&self) -> u64 {
 		#[allow(clippy::cast_possible_truncation)]
@@ -175,7 +174,6 @@ impl Driver {
 		timeout
 	}
 
-	#[inline(always)]
 	fn park(&self, timeout: u64) {
 		self.io_engine
 			.work(timeout)

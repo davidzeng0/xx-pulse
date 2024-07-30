@@ -1,4 +1,4 @@
-#![allow(unreachable_pub, clippy::module_name_repetitions)]
+#![allow(unreachable_pub)]
 
 use std::mem::size_of;
 

@@ -105,7 +105,7 @@ pub mod raw {
 			/// # Safety
 			/// all pointers must be valid until the function returns
 			#[asynchronous]
-			#[inline(always)]
+			#[inline]
 			pub async unsafe fn $func($($arg: $type),*) -> $return_type {
 				let driver = internal_get_driver().await;
 

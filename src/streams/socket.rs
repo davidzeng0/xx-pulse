@@ -1,5 +1,3 @@
-#![allow(clippy::module_name_repetitions)]
-
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::os::fd::AsRawFd;
 

@@ -153,7 +153,7 @@ impl AsyncIterator for ReadDir {
 
 #[asynchronous]
 #[allow(clippy::impl_trait_in_params)]
-pub async fn read_dir(path: impl AsRef<Path> + Send) -> Result<ReadDir> {
+pub async fn read_dir(path: impl AsRef<Path>) -> Result<ReadDir> {
 	let path = path.as_ref();
 	let flags = make_bitflags!(OpenFlag::{
 		Directory | LargeFile | CloseOnExec | NonBlock

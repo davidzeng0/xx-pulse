@@ -1,5 +1,3 @@
-#![allow(clippy::module_name_repetitions)]
-
 use super::*;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
