@@ -1,6 +1,7 @@
 #![allow(warnings)]
 
 use xx_core::error::*;
+use xx_pulse::net::*;
 use xx_pulse::*;
 
 #[main]

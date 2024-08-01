@@ -1,6 +1,7 @@
 #![allow(warnings)]
 
 use xx_core::async_std::io::*;
+use xx_pulse::fs::File;
 use xx_pulse::*;
 
 #[main]
