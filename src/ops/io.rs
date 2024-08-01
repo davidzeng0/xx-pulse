@@ -1,3 +1,5 @@
+//! Direct I/O operations and syscalls.
+
 use std::ffi::CStr;
 use std::mem::size_of;
 use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd, RawFd};
@@ -18,6 +20,9 @@ use xx_core::pointer::*;
 use super::*;
 
 pub mod raw {
+	//! Raw async I/O functions. Use with care. See [the documentation for the
+	//! safe counterparts](`super`) for more information
+
 	use xx_core::os::socket::raw::MsgHdr;
 
 	use super::*;
@@ -250,6 +255,13 @@ where
 	})
 }
 
+/// The equivalent of an `open(2)` syscall. The file at `path` is opened, and a
+/// file descriptor is returned.
+///
+/// See [`OpenFlag`] for a list of possible flags and their behaviors.
+///
+/// The argument `mode` is only used when creating a file, and specifies the
+/// permissions.
 #[asynchronous]
 #[allow(clippy::impl_trait_in_params)]
 pub async fn open(path: impl AsRef<Path>, flags: BitFlags<OpenFlag>, mode: u32) -> Result<OwnedFd> {
@@ -260,12 +272,20 @@ pub async fn open(path: impl AsRef<Path>, flags: BitFlags<OpenFlag>, mode: u32) 
 	.await
 }
 
+/// The equivalent of a `close(2)` syscall. Closes the file descriptor `fd`.
 #[asynchronous]
 pub async fn close(fd: OwnedFd) -> Result<()> {
 	/* Safety: all references must be valid for this function call */
 	unsafe { raw::close(fd.as_raw_fd()).await }
 }
 
+/// The equivalent of a read(2) syscall. Reads from the file descriptor into the
+/// buffer, with an optional offset. On files that support seeking, if the
+/// offset is set to `-1`, the read operation commences at the file offset, and
+/// the file offset is incremented by the number of bytes read. On files that
+/// are not capable of seeking, the offset must be either `0` or `-1`.
+///
+/// Returns the number of bytes read.
 #[asynchronous]
 pub async fn read(fd: BorrowedFd<'_>, buf: &mut [u8], offset: i64) -> Result<usize> {
 	/* Safety: all references must be valid for this function call */
@@ -280,12 +300,21 @@ pub async fn read(fd: BorrowedFd<'_>, buf: &mut [u8], offset: i64) -> Result<usi
 	}
 }
 
+/// The equivalent of a `write(2)` syscall. Write to the file descriptor from
+/// the buffer, with an optional offset. On files that support seeking, if the
+/// offset is set to `-1`, the write operation commences at the file offset, and
+/// the file offset is incremented by the number of bytes read. On files that
+/// are not capable of seeking, the offset must be either `0` or `-1`.
+///
+/// Returns the number of bytes written.
 #[asynchronous]
 pub async fn write(fd: BorrowedFd<'_>, buf: &[u8], offset: i64) -> Result<usize> {
 	/* Safety: all references must be valid for this function call */
 	unsafe { raw::write(fd.as_raw_fd(), ptr!(buf.as_ptr()).cast(), buf.len(), offset).await }
 }
 
+/// The equivalent of a `socket(2)` syscall. A socket is created matching the
+/// `domain`, `socket_type` and `protocol` arguments
 #[asynchronous]
 pub async fn socket(
 	domain: AddressFamily, socket_type: u32, protocol: IpProtocol
@@ -294,8 +323,15 @@ pub async fn socket(
 	unsafe { raw::socket(domain as u32, socket_type, protocol as u32).await }
 }
 
+/// The equivalent of an `accept(2)` syscall. Accepts an incoming connection on
+/// a socket. The `addr` argument is used to store the address of the incoming
+/// connection. Returns a tuple of the socket file descriptor and the length in
+/// bytes of the address
+///
+/// # Safety
+/// `addr` must be valid for stores of socket addresses
 #[asynchronous]
-pub async fn accept<A>(socket: BorrowedFd<'_>, addr: &mut A) -> Result<(OwnedFd, i32)> {
+pub async unsafe fn accept<A>(socket: BorrowedFd<'_>, addr: &mut A) -> Result<(OwnedFd, i32)> {
 	#[allow(clippy::unwrap_used)]
 	let mut addrlen = size_of::<A>().try_into().unwrap();
 
@@ -306,6 +342,8 @@ pub async fn accept<A>(socket: BorrowedFd<'_>, addr: &mut A) -> Result<(OwnedFd,
 	Ok((fd, addrlen))
 }
 
+/// The equivalent of a `connect(2)` syscall. Connects the socket to the address
+/// specified by `addr`
 #[asynchronous]
 pub async fn connect<A>(socket: BorrowedFd<'_>, addr: &A) -> Result<()> {
 	/* Safety: all references must be valid for this function call */
@@ -320,6 +358,7 @@ pub async fn connect<A>(socket: BorrowedFd<'_>, addr: &A) -> Result<()> {
 	}
 }
 
+/// The same as [`connect`]
 #[asynchronous]
 pub async fn connect_addr(socket: BorrowedFd<'_>, addr: &Address) -> Result<()> {
 	match &addr {
@@ -328,6 +367,12 @@ pub async fn connect_addr(socket: BorrowedFd<'_>, addr: &Address) -> Result<()> 
 	}
 }
 
+/// The equivalent of a `recv(2)` syscall. Receives data from the socket into
+/// `buf`.
+///
+/// See [`MessageFlag`] for a list of possible flags and their behaviors.
+///
+/// Returns the number of bytes read.
 #[asynchronous]
 pub async fn recv(
 	socket: BorrowedFd<'_>, buf: &mut [u8], flags: BitFlags<MessageFlag>
@@ -344,6 +389,12 @@ pub async fn recv(
 	}
 }
 
+/// The equivalent of a `recvmsg(2)` syscall. Receives data from the socket into
+/// a buffer specified by the [`MsgHdrMut`]
+///
+/// See [`MessageFlag`] for a list of possible flags and their behaviors.
+///
+/// Returns the number of bytes read.
 #[asynchronous]
 pub async fn recvmsg(
 	socket: BorrowedFd<'_>, header: &mut MsgHdrMut<'_>, flags: BitFlags<MessageFlag>
@@ -352,6 +403,12 @@ pub async fn recvmsg(
 	unsafe { raw::recvmsg(socket.as_raw_fd(), ptr!(header).cast(), flags.bits()).await }
 }
 
+/// The equivalent of a `send(2)` syscall. Receives data from the socket into
+/// `buf`
+///
+/// See [`MessageFlag`] for a list of possible flags and their behaviors.
+///
+/// Returns the number of bytes sent.
 #[asynchronous]
 pub async fn send(
 	socket: BorrowedFd<'_>, buf: &[u8], flags: BitFlags<MessageFlag>
@@ -368,6 +425,12 @@ pub async fn send(
 	}
 }
 
+/// The equivalent of a `sendmsg(2)` syscall. Receives data from the socket into
+/// a buffer specified by the [`MsgHdr`]
+///
+/// See [`MessageFlag`] for a list of possible flags and their behaviors.
+///
+/// Returns the number of bytes sent.
 #[asynchronous]
 pub async fn sendmsg(
 	socket: BorrowedFd<'_>, header: &MsgHdr<'_>, flags: BitFlags<MessageFlag>
@@ -376,12 +439,17 @@ pub async fn sendmsg(
 	unsafe { raw::sendmsg(socket.as_raw_fd(), ptr!(header).cast(), flags.bits()).await }
 }
 
+/// The equivalent of a `shutdown(2)` syscall. Shuts down a part or all of the
+/// connection according to the `how` argument.
+///
+/// See [`Shutdown`] for possible values
 #[asynchronous]
 pub async fn shutdown(socket: BorrowedFd<'_>, how: Shutdown) -> Result<()> {
 	/* Safety: all references must be valid for this function call */
 	unsafe { raw::shutdown(socket.as_raw_fd(), how as u32).await }
 }
 
+/// The equivalent of a `bind(2)` syscall. Assign an address to the socket.
 #[asynchronous]
 pub async fn bind<A>(socket: BorrowedFd<'_>, addr: &A) -> Result<()> {
 	/* Safety: all references must be valid for this function call */
@@ -396,6 +464,7 @@ pub async fn bind<A>(socket: BorrowedFd<'_>, addr: &A) -> Result<()> {
 	}
 }
 
+/// The same as [`bind`]
 #[asynchronous]
 pub async fn bind_addr(socket: BorrowedFd<'_>, addr: &Address) -> Result<()> {
 	match &addr {
@@ -404,18 +473,37 @@ pub async fn bind_addr(socket: BorrowedFd<'_>, addr: &Address) -> Result<()> {
 	}
 }
 
+/// The equivalent of a `listen(2)` syscall. The socket is marked as a passive
+/// socket and can be used to accept incoming connection requests using
+/// [`accept`]
+///
+/// The `backlog` argument is the maximum length to which the queue of pending
+/// connections for the socket may grow to.
 #[asynchronous]
 pub async fn listen(socket: BorrowedFd<'_>, backlog: i32) -> Result<()> {
 	/* Safety: all references must be valid for this function call */
 	unsafe { raw::listen(socket.as_raw_fd(), backlog).await }
 }
 
+/// The equivalent of an `fsync(2)` syscall. Modifications to the file are
+/// flushed to the disk.
 #[asynchronous]
 pub async fn fsync(file: BorrowedFd<'_>) -> Result<()> {
 	/* Safety: all references must be valid for this function call */
 	unsafe { raw::fsync(file.as_raw_fd()).await }
 }
 
+/// The equivalent of an `statx(2)` syscall. Information about the file is
+/// returned in the `statx` argument. See [`Statx`] for more info.
+///
+/// The optional `dirfd` argument specifies the directory to which `path` is
+/// relative to. If not specified, the path is relative to the process's current
+/// working directory.
+///
+/// See [`AtFlag`] for a list of possible flags and their behaviors.
+///
+/// The `mask` argument tells the kernel what fields the caller is interested
+/// in. See [`StatxMask`] for a list of possible flags.
 #[asynchronous]
 #[allow(clippy::impl_trait_in_params)]
 pub async fn statx(
@@ -440,6 +528,8 @@ pub async fn statx(
 	.await
 }
 
+/// The same as [`statx`] but instead of a file path, a file descriptor is used
+/// instead as the target.
 #[asynchronous]
 #[allow(clippy::impl_trait_in_params)]
 pub async fn statx_fd(
@@ -462,6 +552,11 @@ pub async fn statx_fd(
 	}
 }
 
+/// Wait for an event on a file descriptor.
+///
+/// See [`PollFlag`] for a list of possible events.
+///
+/// Returns the events that were notified.
 #[asynchronous]
 pub async fn poll(fd: BorrowedFd<'_>, mask: BitFlags<PollFlag>) -> Result<BitFlags<PollFlag>> {
 	/* Safety: all references must be valid for this function call */

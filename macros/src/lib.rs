@@ -20,6 +20,18 @@ impl VisitMut for HasAwait {
 }
 
 declare_attribute_macro! {
+	/// Declare a main function with xx-pulse
+	///
+	/// # Example
+	///
+	/// ```
+	/// use xx_pulse::main;
+	///
+	/// #[main]
+	/// async fn main() {
+	/// 	do_async_stuff().await;
+	/// }
+	/// ```
 	pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
 		let mut func = parse2::<ItemFn>(item)?;
 

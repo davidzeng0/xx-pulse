@@ -1,7 +1,8 @@
+//! Common sockets and streams
+
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::os::fd::AsRawFd;
 
-use xx_core::async_std::io::*;
 use xx_core::coroutines::ops::{AsyncFn, AsyncFnExt, AsyncFnOnce};
 use xx_core::macros::*;
 use xx_core::os::epoll::PollFlag;
@@ -511,7 +512,8 @@ impl Socket {
 	pub async fn local_addr(&self) -> Result<SocketAddr> {
 		let mut addr = AddressStorage::default();
 
-		get_sock_name(self.fd(), &mut addr)?;
+		/* Safety: addr is able to store addresses */
+		unsafe { get_sock_name(self.fd(), &mut addr)? };
 
 		Ok(convert_addr(addr))
 	}
@@ -520,7 +522,8 @@ impl Socket {
 	pub async fn peer_addr(&self) -> Result<SocketAddr> {
 		let mut addr = AddressStorage::default();
 
-		get_peer_name(self.fd(), &mut addr)?;
+		/* Safety: addr is able to store addresses */
+		unsafe { get_peer_name(self.fd(), &mut addr)? };
 
 		Ok(convert_addr(addr))
 	}
@@ -664,7 +667,9 @@ impl TcpListener {
 	#[asynchronous]
 	pub async fn accept(&self) -> Result<(StreamSocket, SocketAddr)> {
 		let mut storage = AddressStorage::default();
-		let (fd, _) = io::accept(self.socket.fd(), &mut storage).await?;
+
+		/* Safety: storage is able to store addresses */
+		let (fd, _) = unsafe { io::accept(self.socket.fd(), &mut storage).await? };
 
 		Ok((StreamSocket { socket: fd.into() }, convert_addr(storage)))
 	}

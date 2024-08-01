@@ -1,3 +1,5 @@
+//! The implementation for [`read_dir`]
+
 use std::ffi::OsStr;
 use std::fmt;
 use std::os::fd::{AsFd, AsRawFd, OwnedFd};
@@ -20,6 +22,7 @@ struct Dir {
 	fd: OwnedFd
 }
 
+/// An entry of the directory
 pub struct DirEntry {
 	dir: Arc<Dir>,
 	ent: DirentDef<PathBuf>
@@ -27,11 +30,13 @@ pub struct DirEntry {
 
 #[asynchronous]
 impl DirEntry {
+	/// The path of the file
 	#[must_use]
 	pub fn path(&self) -> PathBuf {
 		self.dir.path.join(self.file_name())
 	}
 
+	/// The name of the file without any leading path component(s).
 	#[must_use]
 	pub fn file_name(&self) -> &OsStr {
 		self.ent.name.as_os_str()
@@ -42,6 +47,7 @@ impl DirEntry {
 		self.ent.ino
 	}
 
+	/// Get the metadata for this file. See [`Metadata`] for more information
 	pub async fn metadata(&self) -> Result<Metadata> {
 		let mut statx = Statx::default();
 
@@ -57,6 +63,7 @@ impl DirEntry {
 		Ok(Metadata(statx))
 	}
 
+	/// Get the file type
 	#[allow(clippy::unwrap_used, clippy::missing_panics_doc)]
 	#[must_use]
 	pub fn file_type(&self) -> FileType {
@@ -82,6 +89,8 @@ impl fmt::Debug for DirEntry {
 	}
 }
 
+/// An iterator over the files of a directory. See [`read_dir`] for more
+/// information.
 pub struct ReadDir {
 	dir: Arc<Dir>,
 	entries: DirEnts
@@ -146,11 +155,19 @@ impl fmt::Debug for ReadDir {
 impl AsyncIterator for ReadDir {
 	type Item = Result<DirEntry>;
 
+	/// Get the next entry in this directory. Returns `None` if there are no
+	/// more.
+	///
+	/// # Cancel safety
+	///
+	/// This function is cancel safe.
 	async fn next(&mut self) -> Option<Self::Item> {
 		self.next().await.transpose()
 	}
 }
 
+/// The async equivalent of [`std::fs::read_dir`]. Returns an iterator over the
+/// files in this directory.
 #[asynchronous]
 #[allow(clippy::impl_trait_in_params)]
 pub async fn read_dir(path: impl AsRef<Path>) -> Result<ReadDir> {

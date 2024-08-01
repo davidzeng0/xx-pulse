@@ -2,7 +2,7 @@
 
 use std::cell::Cell;
 
-use xx_core::container::zero_alloc::linked_list::*;
+use xx_core::container::intrusive::linked_list::*;
 use xx_core::debug;
 use xx_core::fiber::*;
 use xx_core::pointer::*;
@@ -86,6 +86,7 @@ impl Drop for PulseWorker {
 	}
 }
 
+/// The runtime for xx-pulse
 pub struct Runtime {
 	driver: Driver,
 	executor: Executor,
@@ -107,6 +108,8 @@ impl Runtime {
 		Ok(runtime.pin_box())
 	}
 
+	/// Block on a task `T`, running it to completion. This is the entry point
+	/// of any async operation
 	pub fn block_on<T, Output>(&self, task: T) -> Output
 	where
 		T: for<'ctx> Task<Output<'ctx> = Output>
@@ -156,7 +159,8 @@ impl Drop for Runtime {
 				break;
 			}
 
-			while let Some(node) = list.pop_front() {
+			/* Safety: list is pinned */
+			while let Some(node) = unsafe { list.pop_front() } {
 				/* Safety: all nodes are wrapped in PulseWorker */
 				let worker = unsafe { container_of!(node, PulseWorker=>node) };
 
@@ -164,7 +168,7 @@ impl Drop for Runtime {
 				let context = unsafe { ptr!(worker=>context) };
 
 				/* Safety: the worker may not exit immediately, but it unlinks itself on drop */
-				unsafe { self.workers.append(node.as_ref()) };
+				unsafe { self.workers.append(node) };
 
 				/* Safety: signal the task to interrupt */
 				let result = unsafe { Context::interrupt(context) };

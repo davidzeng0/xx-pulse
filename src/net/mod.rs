@@ -1,3 +1,5 @@
+//! Networking
+
 use std::io::{IoSlice, IoSliceMut};
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 
@@ -7,8 +9,7 @@ use xx_core::os::iovec::*;
 
 use super::*;
 
-pub mod file;
 pub mod socket;
 
-pub use file::*;
+#[doc(inline)]
 pub use socket::*;

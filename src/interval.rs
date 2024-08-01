@@ -1,3 +1,5 @@
+//! Contains the implementation for [`Interval`]
+
 use super::*;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
@@ -8,6 +10,7 @@ pub enum MissedTickBehavior {
 	Skip
 }
 
+/// A timer for executing a task periodically.
 #[derive(Clone, Copy)]
 pub struct Interval {
 	expire: u64,

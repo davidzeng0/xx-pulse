@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::os::fd::RawFd;
 
-use enumflags2::{bitflags, BitFlags};
+use enumflags2::BitFlags;
 use xx_core::cell::*;
 use xx_core::coroutines::{Waker, WakerVTable};
 use xx_core::impls::ResultExt;
@@ -45,13 +45,6 @@ static WAKER: WakerVTable = unsafe { WakerVTable::new(prepare, wake) };
 
 fn shutdown() -> Error {
 	fmt_error!("Driver is shutting down" @ ErrorKind::Shutdown)
-}
-
-#[bitflags]
-#[repr(u32)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum TimeoutFlag {
-	Abs = 1 << 0
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]

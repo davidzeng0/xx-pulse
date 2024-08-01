@@ -1,3 +1,5 @@
+//! Fundamental async operations
+
 use xx_core::pointer::*;
 
 use super::*;
@@ -7,10 +9,9 @@ pub mod branch;
 pub mod io;
 pub mod timers;
 
-pub use blocking::*;
-pub use branch::*;
-pub use timers::*;
 pub use xx_core::coroutines::{Join, JoinHandle, Select};
+#[doc(inline)]
+pub use {blocking::*, branch::*, timers::*};
 
 #[asynchronous]
 async fn internal_get_pulse_env<#[cx] 'current>() -> &'current PulseContext {

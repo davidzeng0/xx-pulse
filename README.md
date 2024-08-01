@@ -4,7 +4,7 @@
 
 `msrv: 1.80.0 stable`
 
-[Documentation](https://davidzeng0.github.io/xx-pulse) (Partially documented, still WIP)
+[Documentation](https://davidzeng0.github.io/xx-pulse)
 
 Safe, [performant](./benchmarks/README.md), and efficient async rust runtime. <br>
 Same syntax as async rust and zero-cost ergonomics. <br>

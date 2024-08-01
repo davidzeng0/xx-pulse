@@ -1,4 +1,5 @@
 #![allow(clippy::unwrap_used)]
+//! The implementation for [`File`]
 
 use std::io::SeekFrom;
 use std::path::Path;
@@ -6,9 +7,10 @@ use std::path::Path;
 use xx_core::os::fcntl::*;
 use xx_core::os::stat::*;
 
-use super::io::*;
 use super::*;
+use crate::io::{read, *};
 
+/// A file handle for reading and writing files.
 pub struct File {
 	fd: OwnedFd,
 	offset: u64
@@ -16,6 +18,7 @@ pub struct File {
 
 #[asynchronous]
 impl File {
+	/// Open the file specified by `path` for reading
 	#[allow(clippy::impl_trait_in_params)]
 	pub async fn open(path: impl AsRef<Path>) -> Result<Self> {
 		Ok(Self {
@@ -24,6 +27,7 @@ impl File {
 		})
 	}
 
+	/// Open and possibly create the file specified by `path` for writing
 	#[allow(clippy::impl_trait_in_params)]
 	pub async fn create(path: impl AsRef<Path>) -> Result<Self> {
 		Ok(Self {
@@ -32,6 +36,14 @@ impl File {
 		})
 	}
 
+	/// Read from the file into the buffer `buf`
+	///
+	/// Returns the number of bytes read.
+	///
+	/// # Cancel safety.
+	///
+	/// This function is cancel safe. Advance the buffer by the number of bytes
+	/// read and resume by calling this function with the new buffer.
 	pub async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
 		read_into!(buf);
 
@@ -44,6 +56,14 @@ impl File {
 		Ok(read)
 	}
 
+	/// Write to the file from the buffer `buf`
+	///
+	/// Returns the number of bytes written.
+	///
+	/// # Cancel safety.
+	///
+	/// This function is cancel safe. Advance the buffer by the number of bytes
+	/// written and resume by calling this function with the new buffer.
 	pub async fn write(&mut self, buf: &[u8]) -> Result<usize> {
 		write_from!(buf);
 
@@ -56,10 +76,24 @@ impl File {
 		Ok(wrote)
 	}
 
+	/// Flush written data to the disk. See [`fsync`] for more information.
+	///
+	/// # Cancel safety
+	///
+	/// This function is cancel safe. Resume the operation by calling this
+	/// function.
 	pub async fn flush(&mut self) -> Result<()> {
 		fsync(self.fd.as_fd()).await
 	}
 
+	/// Seek the file to a specified offset.
+	///
+	/// See also [`SeekFrom`]
+	///
+	/// # Cancel safety
+	///
+	/// This function is cancel safe. Resume the operation by calling this
+	/// function again with the same arguments if it previously failed.
 	pub async fn seek(&mut self, seek: SeekFrom) -> Result<u64> {
 		self.offset = match seek {
 			SeekFrom::Start(pos) => pos,
@@ -70,13 +104,31 @@ impl File {
 		Ok(self.offset)
 	}
 
+	/// Close the file asynchronously. Dropping this `File` will close the file
+	/// synchronously, which may not be ideal.
 	pub async fn close(self) -> Result<()> {
 		close(self.fd).await
 	}
 
+	/// Get the current position in the file
 	#[must_use]
 	pub const fn pos(&self) -> u64 {
 		self.offset
+	}
+
+	/// Get the metadata for this file. See [`Metadata`] for more information
+	pub async fn metadata(&self) -> Result<Metadata> {
+		let mut statx = Statx::default();
+
+		io::statx_fd(
+			self.fd.as_fd(),
+			BitFlags::default(),
+			BitFlags::default(),
+			&mut statx
+		)
+		.await?;
+
+		Ok(Metadata(statx))
 	}
 }
 
@@ -105,15 +157,7 @@ impl Seek for File {
 	}
 
 	async fn stream_len(&mut self) -> Result<u64> {
-		let mut stat = Statx::default();
-
-		io::statx_fd(
-			self.fd.as_fd(),
-			BitFlags::default(),
-			BitFlags::default(),
-			&mut stat
-		)
-		.await?;
+		let stat = self.metadata().await?.0;
 
 		if stat.mask().intersects(StatxMask::Size) {
 			Ok(stat.size)
