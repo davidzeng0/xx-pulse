@@ -8,6 +8,7 @@ on:
 
 env:
   VALGRINDFLAGS: --show-reachable=no --show-possibly-lost=no --fair-sched=yes
+  RUSTFLAGS: -D warnings
   RUST_BACKTRACE: 1
 
 jobs:
@@ -21,27 +22,22 @@ jobs:
           submodules: true
       - name: Setup
         run: |
-          curl -L --proto '=https' --tlsv1.2 -sSf -O https://sourceware.org/pub/valgrind/valgrind-3.23.0.tar.bz2
-
-          tar -xf valgrind-3.23.0.tar.bz2
-          rm valgrind-3.23.0.tar.bz2
-          cd valgrind-3.23.0
-          ./configure
-          sudo make install -j $(nproc) &
           sudo apt install -y libc6-dbg &
-
-          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash &
           rustup update &
+          .github/workflows/install_valgrind &
+          .github/workflows/install_test_deps &
 
           wait
-
-          cargo binstall -y cargo-valgrind cargo-llvm-cov
-      - name: Check & Lint
-        run: RUSTFLAGS="-D warnings" cargo clippy --all-targets
-      - name: Test debug build
-        run: cargo test --tests && cargo valgrind test --tests
-      - name: Test release build
-        run: cargo test -r --tests && cargo valgrind test -r --tests
+      - name: Lint & Test debug build
+        run: |
+          cargo clippy --all-targets
+          cargo test --tests --all-targets
+          cargo valgrind test --tests --all-targets
+      - name: Lint & Test release build
+        run: |
+          cargo clippy -r --all-targets
+          cargo test -r --tests --all-targets
+          cargo valgrind test -r --tests --all-targets
       - name: Generate test coverage
         run: cargo llvm-cov --codecov --output-path codecov.json
       - name: Upload coverage reports to Codecov
