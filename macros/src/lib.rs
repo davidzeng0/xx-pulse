@@ -1,5 +1,5 @@
 use syn::visit_mut::VisitMut;
-use xx_macro_support::*;
+use xx_macros::*;
 
 struct HasAwait(bool);
 
